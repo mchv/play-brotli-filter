@@ -17,16 +17,16 @@ jobs:
       - name: Setup java
         uses: actions/setup-java@v6
         with:
-          # lowest Java version supported by the build matrix in build.yml
+          # sbt 2 needs Java 17 or newer; the build targets Java 11 with --release 11
           distribution: temurin
-          java-version: 11
+          java-version: 17
           cache: sbt
 
       - name: Setup SBT
         uses: sbt/setup-sbt@v1
 
       - name: Test
-        run: sbt +test
+        run: sbt +testFull
 
       - name: Publish to Maven Central
         run: sbt ci-release

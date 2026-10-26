@@ -6,18 +6,18 @@ set -euo pipefail
 root="${1:-.}"
 [[ "$root" == -* ]] && root="./$root"
 
-if [[ ! -d "$root/common/target" ]]; then
-	echo "check-jars: $root/common/target not found (run sbt +common/packageBin first)" >&2
+if [[ ! -d "$root/target" ]]; then
+	echo "check-jars: $root/target not found (run sbt +common/packageBin first)" >&2
 	exit 2
 fi
 
 jars=()
 while IFS= read -r -d '' jar; do
 	jars+=("$jar")
-done < <(find "$root/common/target" -path '*/scala-*/brotli4s_*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' -print0)
+done < <(find "$root/target" -path '*/brotli4s/brotli4s_*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' -print0)
 
 if [[ ${#jars[@]} -eq 0 ]]; then
-	echo "check-jars: no brotli4s jars found under $root/common/target" >&2
+	echo "check-jars: no brotli4s jars found under $root/target" >&2
 	exit 2
 fi
 

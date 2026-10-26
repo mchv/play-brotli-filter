@@ -9,7 +9,9 @@ val Scala3 = "3.3.4"
 ThisBuild / scalaVersion := Scala213
 
 lazy val sharedSettings = Seq(
-  scalacOptions ++= Seq("-feature", "-deprecation"),
+  /* sbt 2 needs Java 17+, so build for Java 11 explicitly to keep the artifacts usable on Java 11 */
+  scalacOptions ++= Seq("-feature", "-deprecation", "-release", "11"),
+  javacOptions ++= Seq("--release", "11"),
   libraryDependencies ++= Seq(
     "org.scalatest" %% "scalatest" % "3.2.17" % Test
   ),
@@ -30,7 +32,11 @@ lazy val common = project
 
     artifactPomMetadataSettings,
 
-    assemblySettings
+    assemblySettings,
+
+    /* Dependent projects must use the class directory. Under sbt 2 they otherwise use the packageBin jar, which is
+       replaced by the assembly task, and building akka/pekko/play-* then hangs (a cycle through assembly's classpath). */
+    exportJars := false
   )
 
 val AkkaVersion = "2.6.21"
@@ -69,9 +75,9 @@ lazy val pekko = project.dependsOn(common)
 
 val artifactPomMetadataSettings = Seq(
   organization := "io.github.mchv",
-  licenses := Seq("Apache V2" -> url("https://www.apache.org/licenses/LICENSE-2.0.html")),
+  licenses := Seq("Apache V2" -> uri("https://www.apache.org/licenses/LICENSE-2.0.html")),
   scmInfo := Some(ScmInfo(
-  url("https://github.com/mchv/play-brotli-filter"),
+  uri("https://github.com/mchv/play-brotli-filter"),
     "scm:git:git@github.com:mchv/play-brotli-filter.git"
   )),
   pomExtra := {
@@ -91,8 +97,9 @@ val assemblySettings = Seq(
     Compile / packageBin := assembly.value,
 
 
-    /* Use same packaged jar name that packageBin task */
-    assembly / assemblyJarName :=  s"${name.value}_${scalaBinaryVersion.value}-${version.value}.jar",
+    /* Keep the version out of the jar name: sbt 2 caches the assembly output, and a name that contains the
+       version makes a cached jar from another version (e.g. a snapshot) be picked up and fail signing */
+    assembly / assemblyJarName :=  s"${name.value}_${scalaBinaryVersion.value}.jar",
 
     /* Exclude the scala library from being included in assembled jar*/
     assembly / assemblyOption ~= {
@@ -104,7 +111,7 @@ val assemblySettings = Seq(
     assembly / assemblyExcludedJars := {
           val cp = (assembly / fullClasspath).value
           cp filter { f =>
-            val jarName = f.data.getName
+            val jarName = f.data.name
             jarName == s"brotli4j-${Brotli4jVersion}.jar" || jarName.startsWith("scala3-library_3-")
           }
     },
@@ -125,6 +132,9 @@ lazy val `play-v28` = project
     name:="play-v28-brotli-filter",
     description := "A brotli filter module for Play 2.8",
     crossScalaVersions := Seq(Scala212, Scala213),
+    /* Test deps (scalatest 3.2 needs scala-xml 2.x, Play 2.8 needs 1.x) conflict on Scala 2.12. Tests ran with
+       scala-xml 2.x under sbt 1, where this was only a warning; sbt 2 turns it into an error. */
+    libraryDependencySchemes += "org.scala-lang.modules" %% "scala-xml" % VersionScheme.Always,
     libraryDependencies ++= Seq(
       "com.typesafe.play" %% "play" % "2.8.22" % Provided,
       "com.typesafe.play" %% "filters-helpers" % "2.8.22" % Test,
@@ -146,9 +156,9 @@ lazy val `play-v29` = project
     description := "A brotli filter module for Play 2.9",
     crossScalaVersions := Seq(Scala213, Scala3),
     libraryDependencies ++= Seq( 
-      "com.typesafe.play" %% "play" % "2.9.6" % Provided,
-      "com.typesafe.play" %% "filters-helpers" % "2.9.0-M6" % Test,
-      "com.typesafe.play" %% "play-specs2" % "2.9.6" % Test,
+      "com.typesafe.play" %% "play" % "2.9.12" % Provided,
+      "com.typesafe.play" %% "play-filters-helpers" % "2.9.12" % Test,
+      "com.typesafe.play" %% "play-specs2" % "2.9.12" % Test,
     ),
 
     artifactPomMetadataSettings
@@ -162,9 +172,9 @@ lazy val `play-v29` = project
     description := "A brotli filter module for Play 3",
     crossScalaVersions := Seq(Scala213, Scala3),
     libraryDependencies ++= Seq( 
-      "org.playframework" %% "play" % "3.0.6" % Provided,
-      "org.playframework" %% "play-filters-helpers" % "3.0.6" % Test,
-      "org.playframework" %% "play-specs2" % "3.0.6" % Test,
+      "org.playframework" %% "play" % "3.0.12" % Provided,
+      "org.playframework" %% "play-filters-helpers" % "3.0.12" % Test,
+      "org.playframework" %% "play-specs2" % "3.0.12" % Test,
     ),
 
     artifactPomMetadataSettings

@@ -20,6 +20,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.nio.file.Path
 import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import org.apache.pekko.stream.scaladsl.FileIO
 import org.apache.commons.io.IOUtils
 import scala.concurrent.Future
@@ -126,7 +127,15 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
       await(result).body must beAnInstanceOf[HttpEntity.Strict]
     }
 
-    val path: Path = Path.of(getClass.getResource("/bootstrap.min.css").toURI())
+    // Copy the resource to a temp file: with sbt 2 it is inside a jar, so it has no file system path.
+    val path: Path = {
+      val tmp = Files.createTempFile("bootstrap", ".min.css")
+      tmp.toFile.deleteOnExit()
+      val in = getClass.getResourceAsStream("/bootstrap.min.css")
+      try Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING)
+      finally in.close()
+      tmp
+    }
     val source = FileIO.fromPath(path)
     val contentLength = Files.size(path)
 
