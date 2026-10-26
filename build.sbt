@@ -99,10 +99,14 @@ val assemblySettings = Seq(
           _.withIncludeScala(false)
     },
 
-    /* Exclude brotli4j library from being included in assembled jar*/
+    /* Exclude brotli4j and the Scala libraries from being included in assembled jar.
+       withIncludeScala(false) only covers scala-library, not scala3-library_3. */
     assembly / assemblyExcludedJars := {
           val cp = (assembly / fullClasspath).value
-          cp filter {_.data.getName == s"brotli4j-${Brotli4jVersion}.jar"}
+          cp filter { f =>
+            val jarName = f.data.getName
+            jarName == s"brotli4j-${Brotli4jVersion}.jar" || jarName.startsWith("scala3-library_3-")
+          }
     },
 
 
