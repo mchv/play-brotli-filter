@@ -23,8 +23,10 @@ fi
 
 status=0
 for jar in "${jars[@]}"; do
+	# List first, so that a failing `jar tf` (corrupt jar, missing JDK) aborts the script through `set -e`.
+	listing=$(jar tf "$jar")
 	# grep exits 1 when nothing matches; only that exit is swallowed.
-	count=$({ jar tf "$jar" | grep -E '^scala/' || [ $? -eq 1 ]; } | wc -l)
+	count=$({ grep -E '^scala/' <<<"$listing" || [ $? -eq 1 ]; } | wc -l)
 	if [[ "$count" -gt 0 ]]; then
 		echo "FAIL $jar contains $count scala/ entries" >&2
 		status=1
