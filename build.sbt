@@ -1,5 +1,3 @@
-import sbtrelease.ReleaseStateTransformations._
-
 resolvers += "Typesafe repository" at "https://repo.typesafe.com/typesafe/releases/"
 
 
@@ -9,8 +7,6 @@ val Scala3 = "3.3.4"
 
 
 ThisBuild / scalaVersion := Scala213
-
-ThisBuild / publishTo := sonatypePublishToBundle.value
 
 lazy val sharedSettings = Seq(
   scalacOptions ++= Seq("-feature", "-deprecation"),
@@ -72,14 +68,14 @@ lazy val pekko = project.dependsOn(common)
 
 
 val artifactPomMetadataSettings = Seq(
-  organization := "com.gu",
+  organization := "io.github.mchv",
   licenses := Seq("Apache V2" -> url("https://www.apache.org/licenses/LICENSE-2.0.html")),
   scmInfo := Some(ScmInfo(
-  url("https://github.com/guardian/play-brotli-filter"),
-    "scm:git:git@github.com:guardian/play-brotli-filter.git"
+  url("https://github.com/mchv/play-brotli-filter"),
+    "scm:git:git@github.com:mchv/play-brotli-filter.git"
   )),
   pomExtra := {
-    <url>https://github.com/guardian/play-brotli-filter</url>
+    <url>https://github.com/mchv/play-brotli-filter</url>
       <developers>
         <developer>
           <id>mchv</id>
@@ -177,20 +173,5 @@ lazy val `play-brotli-filter-root` = (project in file("."))
     publish / skip := true,
     crossScalaVersions := Nil,
 
-    organization := "com.gu",
-    /* deactivate cross-building and use `+` on `test` and `publishSigned` see https://www.scala-sbt.org/1.x/docs/Cross-Build.html */
-    releaseCrossBuild := false,
-    releaseProcess := Seq(
-      checkSnapshotDependencies,
-      inquireVersions,
-      runClean,
-      releaseStepCommandAndRemaining("+test"),
-      setReleaseVersion,
-      commitReleaseVersion,
-      tagRelease,
-      releaseStepCommandAndRemaining("+publishSigned"),
-      releaseStepCommand("sonatypeBundleRelease"),
-      setNextVersion,
-      commitNextVersion,
-    )
+    organization := "io.github.mchv"
   )
