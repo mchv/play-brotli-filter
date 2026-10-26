@@ -25,11 +25,21 @@ jobs:
       - name: Setup SBT
         uses: sbt/setup-sbt@v1
 
+      # With sbt 2 the plain `sbt` command starts a background server that later `sbt` commands reuse.
+      # A server started by the Test step does not have the secrets below, so ci-release would
+      # silently do nothing. `--server --no-server` runs sbt in the foreground without such a server.
       - name: Test
-        run: sbt +testFull
+        run: sbt --server --no-server -batch +testFull
 
       - name: Publish to Maven Central
-        run: sbt ci-release
+        run: |
+          set -euo pipefail
+          sbt --server --no-server -batch ci-release 2>&1 | tee "$RUNNER_TEMP/ci-release.log"
+          # ci-release exits successfully when it cannot see the secrets, so check for that explicitly
+          if grep -q "doing nothing" "$RUNNER_TEMP/ci-release.log"; then
+            echo "::error::sbt ci-release did nothing, nothing was published"
+            exit 1
+          fi
         env:
           PGP_PASSPHRASE: ${{ secrets.PGP_PASSPHRASE }}
           PGP_SECRET: ${{ secrets.PGP_SECRET }}
