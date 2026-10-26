@@ -2,6 +2,7 @@
 
 [![License](https://img.shields.io/:license-Apache%202.0-blue.svg)](http://www.apache.org/licenses/LICENSE-2.0)
 
+> **Active development happens in this repository.** It is a fork of [guardian/play-brotli-filter](https://github.com/guardian/play-brotli-filter), maintained independently by [@mchv](https://github.com/mchv); the Guardian repository is no longer where development takes place. Releases from here are published under the `io.github.mchv` group id. Releases up to `0.18.0` were published by the Guardian as `com.gu`, so update your dependency's group id when you move to a newer version. The artifact names are unchanged.
 
  * A [Brotli](https://opensource.googleblog.com/2015/09/introducing-brotli-new-compression.html) filter for the [Play framework](https://www.playframework.com/)
  * A [Brotli](https://opensource.googleblog.com/2015/09/introducing-brotli-new-compression.html) compression `Operator` and a decompression `Operator` for [Akka streams](https://doc.akka.io/docs/akka/current/stream/stream-flows-and-basics.html) 
@@ -9,8 +10,6 @@
 
 
 ## Install
-
-> **Note:** this repository is a fork of [guardian/play-brotli-filter](https://github.com/guardian/play-brotli-filter), maintained independently by [@mchv](https://github.com/mchv). Releases from this repository are published under the `io.github.mchv` group id. Releases up to `0.18.0` were published by the Guardian as `com.gu`; update your dependency's group id when you move to a newer version. The artifact names are unchanged.
 
 Add as a dependency:
 
