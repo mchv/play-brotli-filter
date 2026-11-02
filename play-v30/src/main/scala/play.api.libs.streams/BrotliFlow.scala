@@ -46,7 +46,7 @@ object BrotliFlow {
   }
 
   private def chunkerIfNeeded(bufferSize: Int): Flow[ByteString, ByteString, Any] =
-    if (bufferSize > 0 || bufferSize < Int.MaxValue) Flow.fromGraph(new Chunker(bufferSize))
+    if (bufferSize > 0 && bufferSize < Int.MaxValue) Flow.fromGraph(new Chunker(bufferSize))
     else Flow[ByteString]
 
   // http://doc.akka.io/docs/akka/2.4.14/scala/stream/stream-cookbook.html#Chunking_up_a_stream_of_ByteStrings_into_limited_size_ByteStrings

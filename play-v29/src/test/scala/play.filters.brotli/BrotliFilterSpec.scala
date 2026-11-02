@@ -23,12 +23,14 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import akka.stream.scaladsl.FileIO
 import org.apache.commons.io.IOUtils
-import scala.concurrent.Future
+import scala.concurrent.{ Await, Future }
+import scala.concurrent.duration._
 import scala.util.Random
 import org.specs2.matcher.{DataTables, MatchResult}
 
 import com.aayushatharva.brotli4j.decoder.BrotliInputStream;
 import play.api.mvc.Cookie
+import play.api.libs.streams.BrotliFlow
 
 object BrotliFilterSpec extends PlaySpecification with DataTables {
 
@@ -174,6 +176,19 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
       val result = makeBrotliRequest(app)
       checkCompressed(result)
       header(VARY, result) must beSome[String].which(header => header.split(",").filter(_.toLowerCase(java.util.Locale.ENGLISH) == ACCEPT_ENCODING.toLowerCase(java.util.Locale.ENGLISH)).size == 1)
+    }
+  }
+
+  "The BrotliFlow" should {
+
+    "compress a stream when the buffer is disabled with a buffer size of 0 or Int.MaxValue" in withApplication(Ok("unused")) { implicit app =>
+      implicit val mat: Materializer = app.materializer
+      val input = List("hello ", "brotli ", "world").map(ByteString(_))
+      val results = Seq(0, Int.MaxValue).map { bufferSize =>
+        val compressed = Await.result(Source(input).via(BrotliFlow.brotli(bufferSize)).runFold(ByteString.empty)(_ ++ _), 5.seconds)
+        uncompress(compressed) must_== "hello brotli world"
+      }
+      results.reduce(_ and _)
     }
   }
 
