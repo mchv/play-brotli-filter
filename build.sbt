@@ -181,6 +181,20 @@ lazy val `play-v29` = project
   )
 
 
+/* JMH benchmarks of the encoders and decoders. Not published and not aggregated by the root project, so that
+   the cross-building build, test and publish commands do not touch it. See bench/README.md. */
+lazy val bench = project
+  .dependsOn(pekko)
+  .enablePlugins(JmhPlugin)
+  .settings(
+    scalaVersion := Scala213,
+    crossScalaVersions := Nil,
+    publish / skip := true,
+    libraryDependencies += "org.apache.pekko" %% "pekko-stream" % PekkoVersion,
+    /* The benchmarks compress the minified bootstrap css that the Play tests use */
+    Compile / unmanagedResourceDirectories += baseDirectory.value / ".." / "play-v29" / "src" / "test" / "resources"
+  )
+
 lazy val `play-brotli-filter-root` = (project in file("."))
   .aggregate(common, akka, pekko, `play-v28`,`play-v29` ,`play-v30`)
   .settings(
