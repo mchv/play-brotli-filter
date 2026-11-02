@@ -29,11 +29,11 @@ import play.api.inject.Module
 import play.api.{ Environment, Configuration }
 import play.api.mvc._
 import play.api.libs.streams.BrotliFlow
+import akka.stream.io.compression.brotli.BrotliCompressor
 import scala.concurrent.{ Future, ExecutionContextExecutor}
 import play.api.http.{ HttpChunk, HttpEntity, Status }
 import scala.compat.java8.FunctionConverters._
 
-import com.aayushatharva.brotli4j.encoder.BrotliOutputStream;
 import com.aayushatharva.brotli4j.encoder.Encoder;
 
 /**
@@ -123,8 +123,6 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
 
             val extractChunks = Flow[HttpChunk] collect { case HttpChunk.Chunk(data) => data }
 
-            val foldData = Flow[ByteString].fold(ByteString.empty)((acc, x) => acc ++ x)
-
             val createChunks = Flow[ByteString].map[HttpChunk](HttpChunk.Chunk.apply)
             val filterLastChunk = Flow[HttpChunk]
               .filter(_.isInstanceOf[HttpChunk.LastChunk])
@@ -137,9 +135,9 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
             val concat = builder.add(Concat[HttpChunk]())
 
             // Broadcast the stream through two separate flows, one that collects chunks and turns them into
-            // ByteStrings, fold into one ByteString then sends that ByteString through the Brotli flow, and then turns them back into chunks,
+            // ByteStrings, sends them through the Brotli flow as they come, and then turns them back into chunks,
             // the other that just allows the last chunk through. Then concat those two flows together.
-            broadcast.out(0) ~> extractChunks ~> foldData ~> createBrotliFlow ~> createChunks ~> concat.in(0)
+            broadcast.out(0) ~> extractChunks ~> createBrotliFlow ~> createChunks ~> concat.in(0)
             broadcast.out(1) ~> filterLastChunk ~> concat.in(1)
 
             new FlowShape(broadcast.in, concat.out)
@@ -155,13 +153,8 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
   private def createBrotliFlow: Flow[ByteString, ByteString, _] =
     BrotliFlow.brotli(config.bufferSize, config.encoderParameters)
 
-  private def compressStrictEntity(data: ByteString, contentType: Option[String]) = {
-    val builder = ByteString.newBuilder
-    val brotliOs = new BrotliOutputStream(builder.asOutputStream, config.encoderParameters)
-    brotliOs.write(data.toArray)
-    brotliOs.close()
-    HttpEntity.Strict(builder.result(), contentType)
-  }
+  private def compressStrictEntity(data: ByteString, contentType: Option[String]) =
+    HttpEntity.Strict(BrotliCompressor.compress(data, config.encoderParameters), contentType)
 
   /**
    * Whether this request may be compressed.

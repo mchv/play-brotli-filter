@@ -23,7 +23,9 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import org.apache.pekko.stream.scaladsl.FileIO
 import org.apache.commons.io.IOUtils
-import scala.concurrent.{ Await, Future }
+import java.util.concurrent.{ LinkedBlockingQueue, TimeUnit }
+
+import scala.concurrent.{ Await, Future, Promise }
 import scala.concurrent.duration._
 import scala.util.Random
 import org.specs2.matcher.{DataTables, MatchResult}
@@ -111,6 +113,24 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
 
       checkCompressedBody(result, "foobar")(app.materializer)
       await(result).body must beAnInstanceOf[HttpEntity.Chunked]
+    }
+
+    "stream a chunked response, compressing its chunks as they come instead of when the response ends" in {
+      val secondChunk = Promise[String]()
+      val chunks = Source.single("first chunk ").concat(Source.future(secondChunk.future))
+      withApplication(Ok.chunked(chunks)) { app =>
+        implicit val mat: Materializer = app.materializer
+        val received = new LinkedBlockingQueue[ByteString]()
+        val done = await(makeBrotliRequest(app)).body.dataStream.runForeach(chunk => received.add(chunk))
+        // The second chunk does not exist yet: the compressed first chunk must be there anyway
+        val first = Option(received.poll(5, TimeUnit.SECONDS))
+        first must beSome
+        secondChunk.success("second chunk")
+        Await.result(done, 5.seconds)
+        val rest = Iterator.continually(received.poll()).takeWhile(_ != null).toList
+        val all = rest.foldLeft(first.get)(_ ++ _)
+        uncompress(all) must_== "first chunk second chunk"
+      }
     }
 
     val body = Random.nextString(1000)

@@ -6,7 +6,7 @@ import scala.concurrent.Await
 import scala.concurrent.duration._
 
 import com.aayushatharva.brotli4j.Brotli4jLoader
-import com.aayushatharva.brotli4j.encoder.{ BrotliOutputStream, Encoder }
+import com.aayushatharva.brotli4j.encoder.Encoder
 import org.apache.pekko.actor.ActorSystem
 import org.apache.pekko.stream.io.compression.brotli.BrotliCompressor
 import org.apache.pekko.stream.scaladsl.{ BrotliCompression, Sink, Source }
@@ -48,13 +48,7 @@ class EncodeBench {
 
   /** What BrotliFilter does for a strict body. */
   @Benchmark
-  def b_strict(): ByteString = {
-    val builder = ByteString.newBuilder
-    val os = new BrotliOutputStream(builder.asOutputStream, params)
-    os.write(inputBs.toArray)
-    os.close()
-    builder.result()
-  }
+  def b_strict(): ByteString = BrotliCompressor.compress(inputBs, params)
 
   /** The compressor of the streaming flow, without the stream. */
   @Benchmark

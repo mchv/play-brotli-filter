@@ -12,7 +12,7 @@ object Ratio {
     val input = Data.text(Int.MaxValue)
     val parameters = new Encoder.Parameters().setQuality(5)
     println(s"input: ${input.length} bytes, quality 5")
-    println(f"${"one call"}%-34s ${Encoder.compress(input, parameters).length}%8d")
+    println(f"${"one call"}%-34s ${BrotliCompressor.compress(ByteString.fromArrayUnsafe(input), parameters).length}%8d")
     for (pieceSize <- Seq(16384, 8192, 1024, 256); flush <- Seq(false, true)) {
       val compressor = new BrotliCompressor(parameters)
       val pieces = Data.chunks(input, pieceSize)
