@@ -17,13 +17,14 @@
 package play.filters.brotli
 
 import java.util.function.BiFunction
+import java.util.Locale
 import javax.inject.{ Provider, Inject, Singleton }
 
 import akka.stream.{ OverflowStrategy, FlowShape, Materializer }
 import akka.stream.scaladsl._
 import akka.util.ByteString
 import com.typesafe.config.ConfigMemorySize
-import play.api.http.HttpProtocol
+import play.api.http.{ HttpProtocol, MediaType }
 import play.api.inject.Module
 import play.api.{ Environment, Configuration }
 import play.api.mvc._
@@ -45,6 +46,8 @@ import com.aayushatharva.brotli4j.encoder.Encoder;
  * - The response code is 204 or 304 (these codes MUST NOT contain a body, and an empty compressed response is 20 bytes
  * long)
  * - The response already defines a Content-Encoding header
+ * - The size of the response body is equal or smaller than a given threshold. If the body size cannot be determined,
+ *   then it is assumed the response is over the threshold
  * - A custom shouldBrotli function is supplied and it returns false
  *
  * Since compressing changes the content length of the response, this filter may do some buffering - it will buffer any
@@ -65,8 +68,11 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
   def this(quality: Int = 5,
     bufferSize: Int = 8192,
     chunkedThreshold: Int = 102400,
-    shouldBrotli: (RequestHeader, Result) => Boolean = (_, _) => true)(implicit mat: Materializer) = {
-      this(BrotliFilterConfig(quality, bufferSize, chunkedThreshold, shouldBrotli))
+    shouldBrotli: (RequestHeader, Result) => Boolean = (_, _) => true,
+    threshold: Int = 0,
+    window: Int = -1,
+    mode: Encoder.Mode = Encoder.Mode.GENERIC)(implicit mat: Materializer) = {
+      this(BrotliFilterConfig(quality, bufferSize, chunkedThreshold, shouldBrotli, threshold, window, mode))
     }
 
 
@@ -147,14 +153,13 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
 
   
   private def createBrotliFlow: Flow[ByteString, ByteString, _] =
-    BrotliFlow.brotli(config.bufferSize, config.quality)
+    BrotliFlow.brotli(config.bufferSize, config.encoderParameters)
 
   private def compressStrictEntity(data: ByteString, contentType: Option[String]) = {
     val builder = ByteString.newBuilder
-    val brotliParameters = new Encoder.Parameters().setQuality(config.quality)
-    val gzipOs = new BrotliOutputStream(builder.asOutputStream, brotliParameters)
-    gzipOs.write(data.toArray)
-    gzipOs.close()
+    val brotliOs = new BrotliOutputStream(builder.asOutputStream, config.encoderParameters)
+    brotliOs.write(data.toArray)
+    brotliOs.close()
     HttpEntity.Strict(builder.result(), contentType)
   }
 
@@ -177,11 +182,13 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
   /**
    * Whether this response should be compressed.  Responses that may not contain content won't be compressed, nor will
    * responses that already define a content encoding.  Empty responses also shouldn't be compressed, as they will
-   * actually always get bigger.
+   * actually always get bigger.  Also responses whose body size are equal or lower than the given byte threshold won't
+   * be compressed, because it's assumed they end up being bigger than the original body.
    */
   private def shouldCompress(result: Result) = isAllowedContent(result.header) &&
     isNotAlreadyCompressed(result.header) &&
-    !result.body.isKnownEmpty
+    !result.body.isKnownEmpty &&
+    result.body.contentLength.forall(_ > config.threshold)
 
   /**
    * Certain response codes are forbidden by the HTTP spec to contain content, but a gzipped response always contains
@@ -214,15 +221,41 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
 /**
  * Configuration for the brotli filter
  *
- * @param quality The compression-speed vs compression-density tradeoffs. The higher the quality, the slower the compression. Range is 0 to 11
+ * @param quality The compression-speed vs compression-density tradeoffs. The higher the quality, the slower the compression.
+ *                Range is 0 to 11, or -1 for the default of the brotli encoder (11)
+ * @param bufferSize The maximum amount of data to send to the brotli compressor in one go. Use `0` or `Int.MaxValue` to
+ *                   disable the buffering.
  * @param chunkedThreshold The content length threshold, after which the filter will switch to chunking the result.
  * @param shouldBrotli Whether the given request/result should be compressed with brotli.  This can be used, for example, to implement
  *                   black/white lists for compressing by content type.
+ * @param threshold The byte threshold for the response body size which controls if a response should be compressed.
+ *                  Responses of this size or smaller are not compressed. If the body size cannot be determined, it is
+ *                  assumed to be over the threshold.
+ * @param window The log2 of the sliding window size. Range is 10 to 24, or -1 for the default of the brotli encoder.
+ * @param mode The kind of content the encoder is tuned for: generic, text or font.
  */
-case class BrotliFilterConfig(quality: Int = 5, //TODO check default,
+case class BrotliFilterConfig(quality: Int = 5,
     bufferSize: Int = 8192,
     chunkedThreshold: Int = 102400,
-    shouldBrotli: (RequestHeader, Result) => Boolean = (_, _) => true) {
+    shouldBrotli: (RequestHeader, Result) => Boolean = (_, _) => true,
+    threshold: Int = 0,
+    window: Int = -1,
+    mode: Encoder.Mode = Encoder.Mode.GENERIC) {
+
+  if (quality < -1 || quality > 11) {
+    throw new IllegalArgumentException(
+      s"Invalid brotli quality $quality: it must be between 0 and 11, or -1 for the encoder default")
+  }
+  if (window != -1 && (window < 10 || window > 24)) {
+    throw new IllegalArgumentException(
+      s"Invalid brotli window $window: it must be between 10 and 24, or -1 for the encoder default")
+  }
+  if (bufferSize < 0) {
+    throw new IllegalArgumentException(s"Invalid brotli bufferSize $bufferSize: it must not be negative")
+  }
+  if (threshold < 0) {
+    throw new IllegalArgumentException(s"Invalid brotli threshold $threshold: it must not be negative")
+  }
 
   // alternate constructor and builder methods for Java
   def this() = this(shouldBrotli = (_, _) => true)
@@ -237,18 +270,83 @@ case class BrotliFilterConfig(quality: Int = 5, //TODO check default,
   def withBufferSize(size: Int): BrotliFilterConfig = copy(bufferSize = size)
 
   def withQuality(q: Int): BrotliFilterConfig = copy(quality = q)
+
+  def withThreshold(threshold: Int): BrotliFilterConfig = copy(threshold = threshold)
+
+  def withWindow(window: Int): BrotliFilterConfig = copy(window = window)
+
+  def withMode(mode: Encoder.Mode): BrotliFilterConfig = copy(mode = mode)
+
+  /**
+   * The parameters for the brotli encoder. brotli4j parameters are mutable, so each call returns a new instance.
+   */
+  def encoderParameters: Encoder.Parameters =
+    new Encoder.Parameters().setQuality(quality).setWindow(window).setMode(mode)
 }
 
 object BrotliFilterConfig {
 
-  def fromConfiguration(conf: Configuration) = {
+  def fromConfiguration(conf: Configuration): BrotliFilterConfig = {
 
     val config = conf.get[Configuration]("play.filters.brotli")
 
     BrotliFilterConfig(
       quality = config.get[Int]("quality"),
-      chunkedThreshold = config.get[ConfigMemorySize]("chunkedThreshold").toBytes.toInt
+      bufferSize = memorySize(config, "bufferSize"),
+      chunkedThreshold = memorySize(config, "chunkedThreshold"),
+      shouldBrotli = contentTypeFilter(
+        parseMediaTypes(config, "contentType.whiteList"),
+        parseMediaTypes(config, "contentType.blackList")
+      ),
+      threshold = memorySize(config, "threshold"),
+      window = config.get[Int]("window"),
+      mode = parseMode(config.get[String]("mode"))
     )
+  }
+
+  private def memorySize(config: Configuration, key: String): Int = {
+    val bytes = config.get[ConfigMemorySize](key).toBytes
+    if (bytes > Int.MaxValue) {
+      throw new IllegalArgumentException(s"Invalid brotli $key $bytes bytes: it must not be larger than ${Int.MaxValue} bytes")
+    }
+    bytes.toInt
+  }
+
+  private def parseMode(value: String): Encoder.Mode = {
+    val modes = Encoder.Mode.values().toSeq
+    modes.find(_.name.equalsIgnoreCase(value)).getOrElse {
+      val allowed = modes.map(_.name.toLowerCase(Locale.ROOT)).mkString(", ")
+      throw new IllegalArgumentException(s"Invalid brotli mode '$value': it must be one of $allowed")
+    }
+  }
+
+  private def parseMediaTypes(config: Configuration, key: String): Seq[MediaType] =
+    config.get[Seq[String]](key).map {
+      case MediaType.parse(mediaType) => mediaType
+      case invalid =>
+        throw new IllegalArgumentException(
+          s"Invalid media type '$invalid' in play.filters.brotli.$key: expected 'type/subtype', 'type/*' or '*/*'")
+    }
+
+  /**
+   * Whether a response is compressed, from its content type. When the white list is not empty, only the content types
+   * it matches are compressed, and a response without a content type is not. Otherwise every content type is
+   * compressed except those matched by the black list. The matching ignores the case and the parameters of the
+   * content type, and a `*` in the type or the subtype of a configured media type matches anything.
+   */
+  private[brotli] def contentTypeFilter(whiteList: Seq[MediaType], blackList: Seq[MediaType]): (RequestHeader, Result) => Boolean = {
+    def captured(value: String, mask: String): Boolean = mask == "*" || value.equalsIgnoreCase(mask)
+    def matches(outgoing: MediaType, mask: MediaType): Boolean =
+      captured(outgoing.mediaType, mask.mediaType) && captured(outgoing.mediaSubType, mask.mediaSubType)
+
+    (_, result) => {
+      val outgoing = result.body.contentType.flatMap {
+        case MediaType.parse(mediaType) => Some(mediaType)
+        case _                          => None
+      }
+      if (whiteList.nonEmpty) outgoing.exists(mediaType => whiteList.exists(matches(mediaType, _)))
+      else outgoing.forall(mediaType => !blackList.exists(matches(mediaType, _)))
+    }
   }
 }
 

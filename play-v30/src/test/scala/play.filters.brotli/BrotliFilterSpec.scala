@@ -179,6 +179,133 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
     }
   }
 
+  "The BrotliFilter settings" should {
+
+    val prefix = "play.filters.brotli"
+
+    // Compressible text from a small vocabulary: the quality changes its compressed size a lot
+    val sample: String = {
+      val random = new Random(42)
+      val vocabulary = Vector("alpha", "beta", "gamma", "delta", "play", "brotli", "filter", "stream")
+      Iterator.continually(vocabulary(random.nextInt(vocabulary.size))).take(8000).mkString(" ")
+    }
+
+    // High entropy text: it can only be compressed by repeating it, which needs a large enough window
+    val block: String = {
+      val random = new Random(7)
+      val alphabet = (('a' to 'z') ++ ('0' to '9')).toVector
+      Iterator.continually(alphabet(random.nextInt(alphabet.size))).take(3000).mkString
+    }
+
+    def streamed(text: String): Result =
+      Ok.sendEntity(HttpEntity.Streamed(Source.single(ByteString(text)), None, None))
+
+    def compressedBytes(result: Result, settings: (String, Any)*): ByteString =
+      withApplication(result, settings = settings) { app =>
+        contentAsBytes(makeBrotliRequest(app))(defaultAwaitTimeout, app.materializer)
+      }
+
+    def notCompressed(result: Result, expectedBody: String, settings: (String, Any)*) =
+      withApplication(result, settings = settings) { implicit app =>
+        checkNotCompressed(makeBrotliRequest(app), expectedBody)(app.materializer)
+      }
+
+    def compressed(result: Result, expectedBody: String, settings: (String, Any)*) =
+      withApplication(result, settings = settings) { implicit app =>
+        checkCompressedBody(makeBrotliRequest(app), expectedBody)(app.materializer)
+      }
+
+    "produce a smaller strict body with a higher quality" in {
+      val fast = compressedBytes(Ok(sample), s"$prefix.quality" -> 0)
+      val best = compressedBytes(Ok(sample), s"$prefix.quality" -> 11)
+      (best.length must be_<(fast.length)) and (uncompress(fast) must_== sample) and (uncompress(best) must_== sample)
+    }
+
+    "produce a smaller streamed body with a higher quality" in {
+      val fast = compressedBytes(streamed(sample), s"$prefix.quality" -> 0)
+      val best = compressedBytes(streamed(sample), s"$prefix.quality" -> 11)
+      (best.length must be_<(fast.length)) and (uncompress(fast) must_== sample) and (uncompress(best) must_== sample)
+    }
+
+    "use the encoder default for a quality of -1, for strict and streamed bodies" in {
+      (compressedBytes(Ok(sample), s"$prefix.quality" -> -1) must_== compressedBytes(Ok(sample), s"$prefix.quality" -> 11)) and
+        (compressedBytes(streamed(sample), s"$prefix.quality" -> -1) must_== compressedBytes(streamed(sample), s"$prefix.quality" -> 11))
+    }
+
+    "use the window for a strict body" in {
+      val small = compressedBytes(Ok(block + block), s"$prefix.window" -> 10)
+      val large = compressedBytes(Ok(block + block), s"$prefix.window" -> 16)
+      (small.length must be_>(large.length * 3 / 2)) and (uncompress(small) must_== block + block) and
+        (uncompress(large) must_== block + block)
+    }
+
+    "use the window for a streamed body" in {
+      val small = compressedBytes(streamed(block + block), s"$prefix.window" -> 10)
+      val large = compressedBytes(streamed(block + block), s"$prefix.window" -> 16)
+      (small.length must be_>(large.length * 3 / 2)) and (uncompress(small) must_== block + block) and
+        (uncompress(large) must_== block + block)
+    }
+
+    "compress strict and streamed bodies with every mode" in {
+      Seq("generic", "text", "font").map { mode =>
+        (uncompress(compressedBytes(Ok(sample), s"$prefix.mode" -> mode)) must_== sample) and
+          (uncompress(compressedBytes(streamed(sample), s"$prefix.mode" -> mode)) must_== sample)
+      }.reduce(_ and _)
+    }
+
+    "compress a streamed body with each buffer size" in {
+      val chunks = Source(List("foo ", "bar ", "baz").map(ByteString(_)))
+      Seq("0", "1", "16k", Int.MaxValue.toString).map { bufferSize =>
+        val result = Ok.sendEntity(HttpEntity.Streamed(chunks, None, None))
+        uncompress(compressedBytes(result, s"$prefix.bufferSize" -> bufferSize)) must_== "foo bar baz"
+      }.reduce(_ and _)
+    }
+
+    "not compress a body that is not above the threshold" in {
+      notCompressed(Ok("x" * 100), "x" * 100, s"$prefix.threshold" -> "1k") and
+        notCompressed(Ok("x" * 1024), "x" * 1024, s"$prefix.threshold" -> "1k")
+    }
+
+    "compress a body that is above the threshold" in {
+      compressed(Ok("x" * 1025), "x" * 1025, s"$prefix.threshold" -> "1k")
+    }
+
+    "compress a body of unknown length, which is assumed to be above the threshold" in {
+      compressed(streamed("tiny"), "tiny", s"$prefix.threshold" -> "1k")
+    }
+
+    "compress bodies of any size by default" in {
+      compressed(Ok("x"), "x")
+    }
+
+    "fail to start the application with an invalid setting, naming it" in {
+      def startFailure(settings: (String, Any)*): String =
+        try {
+          withApplication(Ok("x"), settings = settings)(_ => ())
+          "the application started"
+        } catch {
+          case e: Throwable => Iterator.iterate[Throwable](e)(_.getCause).takeWhile(_ != null).map(_.getMessage).mkString(" | ")
+        }
+      (startFailure(s"$prefix.quality" -> 12) must contain("Invalid brotli quality 12")) and
+        (startFailure(s"$prefix.mode" -> "bogus") must contain("Invalid brotli mode 'bogus'")) and
+        (startFailure(s"$prefix.contentType.whiteList" -> Seq("bogus")) must contain("play.filters.brotli.contentType.whiteList"))
+    }
+
+    "only compress the white listed content types" in {
+      val settings = Seq(s"$prefix.contentType.whiteList" -> Seq("text/html"))
+      compressed(Ok("<p>hi</p>").as("text/html"), "<p>hi</p>", settings: _*) and
+        notCompressed(Ok("{}").as("application/json"), "{}", settings: _*) and
+        notCompressed(Ok("plain"), "plain", settings: _*)
+    }
+
+    "not compress the black listed content types" in {
+      val settings = Seq(s"$prefix.contentType.blackList" -> Seq("application/json"))
+      notCompressed(Ok("{}").as("application/json"), "{}", settings: _*) and
+        compressed(Ok("<p>hi</p>").as("text/html"), "<p>hi</p>", settings: _*) and
+        compressed(Ok("plain"), "plain", settings: _*)
+    }
+  }
+
   "The BrotliFlow" should {
 
     "compress a stream when the buffer is disabled with a buffer size of 0 or Int.MaxValue" in withApplication(Ok("unused")) { implicit app =>
@@ -198,12 +325,12 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
 
   class ResultRouter @Inject() (action: DefaultActionBuilder, result: Result) extends SimpleRouterImpl({ case _ => action(result) })
 
-  def withApplication[T](result: Result, quality: Int = 5, chunkedThreshold: Int = 1024)(block: Application => T): T = {
+  def withApplication[T](result: Result, quality: Int = 5, chunkedThreshold: Int = 1024, settings: Seq[(String, Any)] = Nil)(block: Application => T): T = {
     val application = new GuiceApplicationBuilder()
       .configure(
         "play.filters.brotli.quality" -> quality,
         "play.filters.brotli.chunkedThreshold" -> chunkedThreshold
-      ).overrides(
+      ).configure(settings: _*).overrides(
           bind[Result].to(result),
           bind[Router].to[ResultRouter],
           bind[HttpFilters].to[Filters]
