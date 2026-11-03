@@ -14,6 +14,7 @@ sizes from a small to a typical response.
 | `EncodeBench.d_streamingFlow` | `BrotliCompression.brotli`, the flow of the Play filter for a response above the chunked threshold |
 | `DecodeBench.a_oneShotDecoder` | The floor: one native brotli4j call |
 | `DecodeBench.b_decoderFlow` | `BrotliCompression.unbrotli`, with the compressed bytes arriving in one piece or in pieces of 1 KB or 256 bytes |
+| `FilterBench.respond` | The brotli filter against Play's gzip filter (levels 6 and 9), on strict, streamed, chunked and tiny-chunked responses, from the request to the last byte of the body, with a `none` row for the cost of the filter and of the benchmark. The setup prints the compressed sizes |
 | `QualityBench.oneShot` | Time per quality; the compressed size per quality is printed |
 | `Latency` | When the compression flow emits its first byte (a `main`, not a JMH benchmark) |
 | `Ratio` | The compressed size depending on how the body reaches the encoder: in one call, or in pieces that are flushed or not (a `main`) |
@@ -23,6 +24,7 @@ Run them from the root of the repository (JDK 17 or newer, as for the build):
 ```
 sbt "bench/Jmh/run -prof gc bench.EncodeBench"
 sbt "bench/Jmh/run -prof gc bench.DecodeBench"
+sbt "bench/Jmh/run -prof gc bench.FilterBench"
 sbt "bench/Jmh/run bench.QualityBench"
 sbt "bench/runMain bench.Latency"
 sbt "bench/runMain bench.Ratio"
