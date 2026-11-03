@@ -6,7 +6,7 @@ package play.filters.brotli
 import javax.inject.Inject
 
 import org.apache.pekko.stream.Materializer
-import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.{ Sink, Source }
 import org.apache.pekko.util.ByteString
 import play.api.Application
 import play.api.http.{ HttpEntity, HttpFilters }
@@ -113,6 +113,23 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
 
       checkCompressedBody(result, "foobar")(app.materializer)
       await(result).body must beAnInstanceOf[HttpEntity.Chunked]
+    }
+
+    "hold the compressed data of chunks that arrive quickly until the flush interval, and flush every chunk for an interval of 0" in {
+      def dataChunks(flushInterval: String): Int = {
+        val chunks = Source(List("one ", "two ", "three ", "four ")) // all there at once
+        withApplication(Ok.chunked(chunks), settings = Seq("play.filters.brotli.flushInterval" -> flushInterval)) { app =>
+          implicit val mat: Materializer = app.materializer
+          val body = await(makeBrotliRequest(app)).body
+          val received = Await.result(body.dataStream.runWith(Sink.seq), 5.seconds)
+          uncompress(received.foldLeft(ByteString.empty)(_ ++ _)) must_== "one two three four "
+          received.count(_.nonEmpty)
+        }
+      }
+      // a long interval: the encoder keeps the data until the end of the stream, so there is little to send before it
+      val held = dataChunks("10 seconds")
+      val flushed = dataChunks("0")
+      (flushed must be_>(held)) and (held must be_<=(2)) and (flushed must be_>=(4))
     }
 
     "stream a chunked response, compressing its chunks as they come instead of when the response ends" in {

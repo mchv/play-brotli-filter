@@ -18,6 +18,8 @@ package play.api.libs.streams
 
 import java.util.zip.Deflater
 
+import scala.concurrent.duration.{ Duration, FiniteDuration }
+
 import com.aayushatharva.brotli4j.encoder.Encoder
 
 import akka.stream.scaladsl.BrotliCompression
@@ -52,10 +54,19 @@ object BrotliFlow {
    * Create a Brotli Flow with the given buffer size and encoder parameters, which set the quality, the window and
    * the mode. See the other `brotli` method for the buffer size.
    */
-  def brotli(bufferSize: Int, parameters: Encoder.Parameters): Flow[ByteString, ByteString, _] = {
+  def brotli(bufferSize: Int, parameters: Encoder.Parameters): Flow[ByteString, ByteString, _] =
+    brotli(bufferSize, parameters, Duration.Zero)
+
+  /**
+   * Create a Brotli Flow like the one above, that flushes the encoder only at the end of the stream and when the oldest
+   * data it holds has waited for `flushInterval`, instead of after every element. A flush ends a block: it costs
+   * compressed size and CPU when the elements are small, and elements that arrive within the interval share a block. A
+   * `flushInterval` of zero flushes after every element.
+   */
+  def brotli(bufferSize: Int, parameters: Encoder.Parameters, flushInterval: FiniteDuration): Flow[ByteString, ByteString, _] = {
     Flow[ByteString]
       .via(chunkerIfNeeded(bufferSize))
-      .via(BrotliCompression.brotli(parameters))
+      .via(BrotliCompression.brotli(parameters, flushInterval))
   }
 
   private def chunkerIfNeeded(bufferSize: Int): Flow[ByteString, ByteString, Any] =

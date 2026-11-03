@@ -184,13 +184,24 @@ lazy val `play-v29` = project
 /* JMH benchmarks of the encoders and decoders. Not published and not aggregated by the root project, so that
    the cross-building build, test and publish commands do not touch it. See bench/README.md. */
 lazy val bench = project
-  .dependsOn(pekko)
+  .dependsOn(pekko, `play-v30`)
   .enablePlugins(JmhPlugin)
   .settings(
-    scalaVersion := Scala213,
+    /* Play 3.0.12 needs a Scala 2.13 compiler that is not older than its scala-library (2.13.18) */
+    scalaVersion := "2.13.18",
     crossScalaVersions := Nil,
     publish / skip := true,
-    libraryDependencies += "org.apache.pekko" %% "pekko-stream" % PekkoVersion,
+    /* A JVM of its own for each run of a main, so that one run does not warm up the next (the load test starts a server) */
+    Compile / run / fork := true,
+    Compile / run / javaOptions += "-Xmx1g",
+    libraryDependencies ++= Seq(
+      "org.apache.pekko" %% "pekko-stream" % PekkoVersion,
+      /* The Play dependencies of play-v30 are Provided; the filter benchmarks run the brotli filter and Play's gzip filter */
+      "org.playframework" %% "play" % "3.0.12",
+      "org.playframework" %% "play-filters-helpers" % "3.0.12",
+      "org.playframework" %% "play-test" % "3.0.12",
+      "org.playframework" %% "play-netty-server" % "3.0.12"
+    ),
     /* The benchmarks compress the minified bootstrap css that the Play tests use */
     Compile / unmanagedResourceDirectories += baseDirectory.value / ".." / "play-v29" / "src" / "test" / "resources"
   )

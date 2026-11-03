@@ -267,8 +267,9 @@ class BrotliSpec extends CoderSpec("brotli") {
       val pieces = Vector("one ", "two ", "three").map(ByteString(_))
       val rope = pieces.join
       BrotliCompressor.compress(rope, parameters) should equal(BrotliCompressor.compress(ByteString.fromArray(rope.toArray), parameters))
+      val fitted = new Encoder.Parameters().setQuality(5).setWindow(BrotliCompressor.windowFor(8))
       BrotliCompressor.compress(rope.drop(2).take(8), parameters) should equal(
-        ByteString(Encoder.compress("e two th".getBytes("UTF-8"), parameters)))
+        ByteString(Encoder.compress("e two th".getBytes("UTF-8"), fitted)))
     }
 
     "release the native encoder when the stream completes, fails or is cancelled" in {
@@ -342,6 +343,148 @@ class BrotliSpec extends CoderSpec("brotli") {
       subscriber.expectNext(5.seconds) should equal(data)
       publisher.sendComplete()
       subscriber.expectComplete()
+    }
+
+    "not flush between elements that arrive within the flush delay" in {
+      val pieces = Vector.tabulate(40)(i => ByteString(words(500)).drop(i * 7).take(2048))
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val oneCall = BrotliCompressor.compress(pieces.join, parameters).length
+      val unflushed = Source(pieces).via(BrotliCompression.brotli(parameters, 10.seconds)).join.awaitResult(5.seconds)
+      // Without a flush the output is the same as the output of a single call
+      unflushed.length should be(oneCall)
+      ourDecode(unflushed).toArray should equal(pieces.join.toArray)
+    }
+
+    "flush after every element when the flush delay is zero" in {
+      val pieces = Vector.tabulate(40)(i => ByteString(words(500)).drop(i * 7).take(2048))
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val flushed = Source(pieces).via(BrotliCompression.brotli(parameters, Duration.Zero)).join.awaitResult(5.seconds)
+      flushed.length should be > BrotliCompressor.compress(pieces.join, parameters).length
+      ourDecode(flushed).toArray should equal(pieces.join.toArray)
+      // every element can be decoded as it arrives
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, Duration.Zero)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(pieces.head)
+      subscriber.expectNext(2.seconds) should not be empty
+    }
+
+    "emit what it holds once the flush delay has passed, while the upstream is idle" in {
+      val piece = ByteString(words(2000))
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, 100.millis)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      val sent = System.nanoTime()
+      publisher.sendNext(piece)
+      val first = subscriber.expectNext(2.seconds)
+      val waited = (System.nanoTime() - sent) / 1000000
+      // after the delay, and not much later
+      waited should be >= 90L
+      waited should be < 1000L
+      // what was emitted decodes to the piece
+      val (decoderIn, decoderOut) =
+        TestSource.probe[ByteString].via(BrotliCompression.unbrotli()).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      decoderOut.request(Long.MaxValue)
+      decoderIn.sendNext(first)
+      var decoded = ByteString.empty
+      while (decoded.length < piece.length) decoded ++= decoderOut.expectNext(2.seconds)
+      decoded.toArray should equal(piece.toArray)
+      decoderIn.sendError(new RuntimeException("done"))
+      decoderOut.expectError()
+      publisher.sendComplete()
+      subscriber.request(Long.MaxValue)
+      subscriber.receiveWithin(2.seconds)
+    }
+
+    "keep what a flush emits while the downstream is not asking, and emit it in order" in {
+      val first = ByteString(words(1500))
+      val second = ByteString(words(1500)).reverse
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, 50.millis)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      publisher.sendNext(first)
+      Thread.sleep(300) // the flush happens without any demand
+      subscriber.request(1)
+      val emitted = subscriber.expectNext(2.seconds)
+      publisher.sendNext(second)
+      publisher.sendComplete()
+      subscriber.request(Long.MaxValue)
+      val rest = subscriber.receiveWithin(2.seconds)
+      val all = rest.foldLeft(emitted)(_ ++ _)
+      ourDecode(all).toArray should equal((first ++ second).toArray)
+    }
+
+    "stop the delayed flush flow when it is cancelled, and fail it when its upstream fails" in {
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, 20.millis)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(ByteString("data"))
+      subscriber.expectNext(2.seconds)
+      subscriber.cancel()
+      publisher.expectCancellation()
+      val failing = TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, 20.millis)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      failing._1.sendError(new RuntimeException("upstream failed"))
+      failing._2.request(1)
+      failing._2.expectError()
+    }
+
+    "fit the window to the body when compressing in one call with the default window" in {
+      // The window is the first thing in a brotli stream (RFC 7932, section 9.1)
+      def windowBits(compressed: ByteString): Int = {
+        val first = compressed(0) & 0xff
+        if ((first & 1) == 0) 16
+        else if (((first >> 1) & 7) != 0) 17 + ((first >> 1) & 7)
+        else {
+          val m = (first >> 4) & 7
+          if (m == 0) 17 else 8 + m
+        }
+      }
+      val parameters = new Encoder.Parameters().setQuality(5)
+      def windowFor(size: Int) =
+        windowBits(BrotliCompressor.compress(ByteString(words(size)).take(size), parameters))
+      // 2^window - 16 is the largest distance of a match: it covers a body of the size, and no more than that
+      windowFor(100) should be(10)
+      windowFor(1008) should be(10)
+      windowFor(1009) should be(11)
+      windowFor(4080) should be(12)
+      windowFor(4081) should be(13)
+      windowFor(100000) should be(17)
+      BrotliCompressor.windowFor(0) should be(10)
+      BrotliCompressor.windowFor(16 * 1024 * 1024 - 16) should be(24)
+      BrotliCompressor.windowFor(Int.MaxValue) should be(24)
+    }
+
+    "keep the window that was asked for, and the size of the output, when compressing in one call" in {
+      val data = ByteString(words(5000)).take(30000)
+      val asked = new Encoder.Parameters().setQuality(5).setWindow(20)
+      val askedOutput = BrotliCompressor.compress(data, asked)
+      askedOutput(0) should be(ByteString(Encoder.compress(data.toArray, asked))(0))
+      // fitting the window changes the compressed size by a few bytes at most
+      val fitted = BrotliCompressor.compress(data, new Encoder.Parameters().setQuality(5)).length
+      math.abs(fitted - askedOutput.length) should be <= 8
+      ourDecode(BrotliCompressor.compress(data, new Encoder.Parameters().setQuality(5))).toArray should equal(data.toArray)
+    }
+
+    "not flush a finished encoder when the flush timer fires while the last output waits for demand" in {
+      val first = ByteString(words(300))
+      val second = ByteString(words(300)).reverse
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, 50.millis)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(first)
+      // the timer flushes the first input, which uses the only demand there is
+      val flushed = subscriber.expectNext(2.seconds)
+      // the second input starts a new timer, then the upstream completes: the last output waits for demand
+      publisher.sendNext(second)
+      publisher.sendComplete()
+      // the timer fires while the encoder is finished
+      Thread.sleep(300)
+      subscriber.request(Long.MaxValue)
+      val rest = subscriber.toStrict(3.seconds) // fails with the error of the stream, or if it does not complete
+      ourDecode(rest.foldLeft(flushed)(_ ++ _)).toArray should equal((first ++ second).toArray)
     }
   }
 }
