@@ -267,8 +267,9 @@ class BrotliSpec extends CoderSpec("brotli") {
       val pieces = Vector("one ", "two ", "three").map(ByteString(_))
       val rope = pieces.join
       BrotliCompressor.compress(rope, parameters) should equal(BrotliCompressor.compress(ByteString.fromArray(rope.toArray), parameters))
+      val fitted = new Encoder.Parameters().setQuality(5).setWindow(BrotliCompressor.windowFor(8))
       BrotliCompressor.compress(rope.drop(2).take(8), parameters) should equal(
-        ByteString(Encoder.compress("e two th".getBytes("UTF-8"), parameters)))
+        ByteString(Encoder.compress("e two th".getBytes("UTF-8"), fitted)))
     }
 
     "release the native encoder when the stream completes, fails or is cancelled" in {
@@ -427,6 +428,43 @@ class BrotliSpec extends CoderSpec("brotli") {
       failing._1.sendError(new RuntimeException("upstream failed"))
       failing._2.request(1)
       failing._2.expectError()
+    }
+
+    "fit the window to the body when compressing in one call with the default window" in {
+      // The window is the first thing in a brotli stream (RFC 7932, section 9.1)
+      def windowBits(compressed: ByteString): Int = {
+        val first = compressed(0) & 0xff
+        if ((first & 1) == 0) 16
+        else if (((first >> 1) & 7) != 0) 17 + ((first >> 1) & 7)
+        else {
+          val m = (first >> 4) & 7
+          if (m == 0) 17 else 8 + m
+        }
+      }
+      val parameters = new Encoder.Parameters().setQuality(5)
+      def windowFor(size: Int) =
+        windowBits(BrotliCompressor.compress(ByteString(words(size)).take(size), parameters))
+      // 2^window - 16 is the largest distance of a match: it covers a body of the size, and no more than that
+      windowFor(100) should be(10)
+      windowFor(1008) should be(10)
+      windowFor(1009) should be(11)
+      windowFor(4080) should be(12)
+      windowFor(4081) should be(13)
+      windowFor(100000) should be(17)
+      BrotliCompressor.windowFor(0) should be(10)
+      BrotliCompressor.windowFor(16 * 1024 * 1024 - 16) should be(24)
+      BrotliCompressor.windowFor(Int.MaxValue) should be(24)
+    }
+
+    "keep the window that was asked for, and the size of the output, when compressing in one call" in {
+      val data = ByteString(words(5000)).take(30000)
+      val asked = new Encoder.Parameters().setQuality(5).setWindow(20)
+      val askedOutput = BrotliCompressor.compress(data, asked)
+      askedOutput(0) should be(ByteString(Encoder.compress(data.toArray, asked))(0))
+      // fitting the window changes the compressed size by a few bytes at most
+      val fitted = BrotliCompressor.compress(data, new Encoder.Parameters().setQuality(5)).length
+      math.abs(fitted - askedOutput.length) should be <= 8
+      ourDecode(BrotliCompressor.compress(data, new Encoder.Parameters().setQuality(5))).toArray should equal(data.toArray)
     }
   }
 }
