@@ -466,5 +466,25 @@ class BrotliSpec extends CoderSpec("brotli") {
       math.abs(fitted - askedOutput.length) should be <= 8
       ourDecode(BrotliCompressor.compress(data, new Encoder.Parameters().setQuality(5))).toArray should equal(data.toArray)
     }
+
+    "not flush a finished encoder when the flush timer fires while the last output waits for demand" in {
+      val first = ByteString(words(300))
+      val second = ByteString(words(300)).reverse
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, 50.millis)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(first)
+      // the timer flushes the first input, which uses the only demand there is
+      val flushed = subscriber.expectNext(2.seconds)
+      // the second input starts a new timer, then the upstream completes: the last output waits for demand
+      publisher.sendNext(second)
+      publisher.sendComplete()
+      // the timer fires while the encoder is finished
+      Thread.sleep(300)
+      subscriber.request(Long.MaxValue)
+      val rest = subscriber.toStrict(3.seconds) // fails with the error of the stream, or if it does not complete
+      ourDecode(rest.foldLeft(flushed)(_ ++ _)).toArray should equal((first ++ second).toArray)
+    }
   }
 }

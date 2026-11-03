@@ -93,6 +93,9 @@ final class BrotliFlushingCompressor(parameters: Encoder.Parameters, maxFlushDel
       }
 
       override def onUpstreamFinish(): Unit = {
+        // finish() releases the encoder, and the last output may wait for demand: a timer must not flush it meanwhile
+        cancelTimer(FlushTimer)
+        held = false
         val last = ready ++ compressor.finish()
         ready = ByteString.empty
         if (last.nonEmpty) emit(out, last, () => completeStage()) else completeStage()
