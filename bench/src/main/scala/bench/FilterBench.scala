@@ -23,8 +23,9 @@ import play.filters.gzip.{ GzipFilter, GzipFilterConfig }
  * of the compressed body, without a network. The compressed size of each combination is printed by the setup.
  *
  * `codec`: `none` is the brotli filter for a request that does not accept brotli, so the response is not compressed:
- * the cost of the filter and of the benchmark, which the other codecs include. `gzip` is Play's default level (-1, which is 6), `gzip9` its best level, `br4` and `br5` are brotli
- * qualities 4 and 5 (5 is the default of the brotli filter).
+ * the cost of the filter and of the benchmark, which the other codecs include. `gzip` is Play's default level (-1, which
+ * is 6), `gzip9` its best level, `br4` and `br5` are brotli qualities 4 and 5 for every response, and `br` is the default
+ * configuration of the brotli filter (quality 5, stream quality 4).
  *
  * `body`: `strict` is a whole body in memory; `streamed` is a body of known length that is above the chunked
  * threshold, so it is compressed as a stream; `chunked` is the same body as a chunked response; `chunkedTiny` is
@@ -37,7 +38,7 @@ import play.filters.gzip.{ GzipFilter, GzipFilterConfig }
 @Measurement(iterations = 5, time = 1)
 @Fork(1)
 class FilterBench {
-  @Param(Array("none", "gzip", "gzip9", "br4", "br5"))
+  @Param(Array("none", "gzip", "gzip9", "br4", "br5", "br"))
   var codec: String = _
 
   @Param(Array("strict4k", "strict140k", "streamed140k", "chunked140k", "chunkedTiny140k"))
@@ -59,8 +60,9 @@ class FilterBench {
     filter = codec match {
       case "gzip"  => new GzipFilter(GzipFilterConfig())
       case "gzip9" => new GzipFilter(GzipFilterConfig(compressionLevel = 9))
-      case "br4"   => new BrotliFilter(BrotliFilterConfig(quality = 4))
-      case "br5"   => new BrotliFilter(BrotliFilterConfig(quality = 5))
+      case "br4"   => new BrotliFilter(BrotliFilterConfig(quality = 4, streamQuality = 4))
+      case "br5"   => new BrotliFilter(BrotliFilterConfig(quality = 5, streamQuality = 5))
+      case "br"    => new BrotliFilter(BrotliFilterConfig())
       case "none"  => new BrotliFilter(BrotliFilterConfig())
     }
     request = codec match {

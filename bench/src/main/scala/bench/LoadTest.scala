@@ -30,10 +30,11 @@ import play.filters.gzip.{ GzipFilter, GzipFilterConfig }
  * real connections. It reports the throughput, the latency, and the CPU, the garbage collection and the allocation per
  * request, and it checks that the compressed responses decode to the right body.
  *
- * Usage: `LoadTest <gzip|br|brN> <small|large|streamed|chunked|tiny> <connections> <warm-up seconds> <seconds> <verify every n>`
+ * Usage: `LoadTest <gzip|br|brN|brqN> <small|large|streamed|chunked|tiny> <connections> <warm-up seconds> <seconds> <verify every n>`
  *
  * `brN` is the brotli filter with a flush interval of N milliseconds (`br0` flushes after every chunk, like the gzip
- * filter); `br` is the brotli filter with its default configuration.
+ * filter); `brqN` is the brotli filter with a stream quality of N; `br` is the brotli filter with its default
+ * configuration.
  *
  * The server and the clients share the JVM, hence the CPU: compare filters with the same arguments, not with other
  * machines. The CPU per request includes the clients, which do the same work for each filter apart from decoding the
@@ -66,6 +67,9 @@ object LoadTest {
       override lazy val httpFilters: Seq[EssentialFilter] = Seq(filterName match {
         case "gzip" => new GzipFilter(GzipFilterConfig.fromConfiguration(configuration))(materializer)
         case "br" => new BrotliFilter(BrotliFilterConfig.fromConfiguration(configuration))(materializer)
+        case brotli if brotli.startsWith("brq") =>
+          new BrotliFilter(
+            BrotliFilterConfig.fromConfiguration(configuration).withStreamQuality(brotli.drop(3).toInt))(materializer)
         case brotli if brotli.startsWith("br") =>
           new BrotliFilter(
             BrotliFilterConfig.fromConfiguration(configuration).withFlushInterval(brotli.drop(2).toInt.millis))(materializer)
@@ -112,7 +116,8 @@ object LoadTest {
     val failures = new AtomicLong
     val firstError = new AtomicReference[String]
     val bytes = new AtomicLong
-    val latencies = Array.fill(connections)(new Array[Long](2000000))
+    // Room for 250 000 requests per connection: 2 MB each, so that the sample does not take a large part of the heap
+    val latencies = Array.fill(connections)(new Array[Long](250000))
     val counts = new Array[Int](connections)
 
     val os = ManagementFactory.getOperatingSystemMXBean.asInstanceOf[com.sun.management.OperatingSystemMXBean]
