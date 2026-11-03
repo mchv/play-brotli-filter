@@ -191,12 +191,16 @@ lazy val bench = project
     scalaVersion := "2.13.18",
     crossScalaVersions := Nil,
     publish / skip := true,
+    /* A JVM of its own for each run of a main, so that one run does not warm up the next (the load test starts a server) */
+    Compile / run / fork := true,
+    Compile / run / javaOptions += "-Xmx1g",
     libraryDependencies ++= Seq(
       "org.apache.pekko" %% "pekko-stream" % PekkoVersion,
       /* The Play dependencies of play-v30 are Provided; the filter benchmarks run the brotli filter and Play's gzip filter */
       "org.playframework" %% "play" % "3.0.12",
       "org.playframework" %% "play-filters-helpers" % "3.0.12",
-      "org.playframework" %% "play-test" % "3.0.12"
+      "org.playframework" %% "play-test" % "3.0.12",
+      "org.playframework" %% "play-netty-server" % "3.0.12"
     ),
     /* The benchmarks compress the minified bootstrap css that the Play tests use */
     Compile / unmanagedResourceDirectories += baseDirectory.value / ".." / "play-v29" / "src" / "test" / "resources"
