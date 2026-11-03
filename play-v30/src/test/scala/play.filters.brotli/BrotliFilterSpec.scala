@@ -33,6 +33,7 @@ import org.specs2.matcher.{DataTables, MatchResult}
 import com.aayushatharva.brotli4j.decoder.BrotliInputStream;
 import play.api.mvc.Cookie
 import play.api.libs.streams.BrotliFlow
+import org.apache.pekko.stream.io.compression.brotli.BrotliCompressor
 
 object BrotliFilterSpec extends PlaySpecification with DataTables {
 
@@ -183,6 +184,26 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
         val result = makeBrotliRequest(app)
         checkCompressedBodyLength(result, contentLength)(app.materializer)
         await(result).body must beAnInstanceOf[HttpEntity.Chunked]
+    }
+
+    "fit the window to a streamed body of known length, and keep the default window when the length is not known" in {
+      // The window is the first thing in a brotli stream (RFC 7932, section 9.1)
+      def windowBits(compressed: ByteString): Int = {
+        val first = compressed(0) & 0xff
+        if ((first & 1) == 0) 16
+        else if (((first >> 1) & 7) != 0) 17 + ((first >> 1) & 7)
+        else {
+          val m = (first >> 4) & 7
+          if (m == 0) 17 else 8 + m
+        }
+      }
+      def windowOf(entity: HttpEntity): Int =
+        withApplication(Ok.sendEntity(entity), chunkedThreshold = 512) { app =>
+          windowBits(contentAsBytes(makeBrotliRequest(app))(defaultAwaitTimeout, app.materializer))
+        }
+      val known = windowOf(HttpEntity.Streamed(source, Some(contentLength), Some("text/css")))
+      val unknown = windowOf(HttpEntity.Streamed(source, None, Some("text/css")))
+      (known must_== BrotliCompressor.windowFor(contentLength.toInt)) and (unknown must_== 22)
     }
 
     "preserve original headers" in withApplication(Ok("hello").withHeaders(SERVER -> "Play")) { implicit app =>
