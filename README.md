@@ -51,6 +51,11 @@ play.filters {
     # encoder, which is 11.
     quality = 5
 
+    # The quality of streamed and chunked responses, which are compressed as they are produced: the same range as
+    # `quality`. Compressing a stream costs more CPU than compressing a body in one call, and a lower quality gives some of
+    # it back for a slightly larger output; at quality 4 the stream of a 140 KB css file is 4% larger than at quality 5.
+    streamQuality = 4
+
     # The log2 of the sliding window size, from 10 (1 KiB) to 24 (16 MiB). A larger window can find more repetitions in
     # large responses but needs more memory, also in the browser. -1 fits the window to the size of a body that is
     # compressed in one call (a small body does not need a large window, and setting one up costs more than compressing it),
@@ -61,7 +66,10 @@ play.filters {
     mode = "generic"
 
     # The maximum amount of data to send to the brotli compressor in one go. Use `0` or `2147483647` to disable the buffering.
-    bufferSize = 8k
+    #
+    # The compressor gives the encoder its input in pieces of 16 KB whatever this is set to, so the buffer only costs: it is
+    # off by default.
+    bufferSize = 0
 
     # The maximum amount of content to buffer for compressing with brotli in order to calculate the content length before falling back
     # to chunked encoding.
@@ -81,6 +89,7 @@ play.filters {
     # The encoder is flushed only when its oldest data has waited that long, and at the end of the response. Flushing after
     # every chunk, as the gzip filter does, ends a block each time and costs compressed size and CPU when the chunks are
     # small: chunks of 8 KB cost 2% of the size, chunks of 1 KB 16%, chunks of 256 bytes 56%. 0 flushes after every chunk.
+    # The scheduler rounds the interval up to its tick (`pekko.scheduler.tick-duration`, 10 ms by default).
     flushInterval = 5 ms
 
     # The byte threshold for the response body size which controls if a response should be compressed (e.g. 1k).
@@ -101,14 +110,14 @@ play.filters.brotli {
 }
 ```
 
-* **Quality:** the default is `5`, because the highest quality, `11`, is much slower and is rarely worth it when compressing responses on the fly. Set it to `11` or `-1` for the smallest output, for example when the responses are cached.
+* **Quality:** the default is `5`, because the highest quality, `11`, is much slower and is rarely worth it when compressing responses on the fly. Set it to `11` or `-1` for the smallest output, for example when the responses are cached. Streamed and chunked responses use `streamQuality`, `4` by default: they cost more CPU than a body compressed in one call, and the lower quality gives some of it back for an output a few percent larger.
 * **Content types:** an entry is a media type such as `text/html`, `text/*` or `*/*`. The matching ignores the case and the parameters (`; charset=utf-8`) of the response content type. With a white list, a response without a content type is not compressed. With only a black list, it is.
 * **Invalid values:** the application fails to start with a message that names the setting, for example when the quality is above 11 or an entry of a content type list is not a media type.
-* **Code:** `BrotliFilterConfig` has the same settings (`withQuality`, `withWindow`, `withMode`, `withBufferSize`, `withChunkedThreshold`, `withThreshold`, `withFlushInterval` and `withShouldBrotli`) for filters that are not created from the configuration.
+* **Code:** `BrotliFilterConfig` has the same settings (`withQuality`, `withStreamQuality`, `withWindow`, `withMode`, `withBufferSize`, `withChunkedThreshold`, `withThreshold`, `withFlushInterval` and `withShouldBrotli`) for filters that are not created from the configuration.
 
 ## Streaming
 
-The Play filter compresses a response as it is produced: a streamed or chunked response is not held in memory until it ends, and its compressed bytes are sent at the latest `flushInterval` (5 ms by default) after the chunk that they come from is available. Chunks that arrive within the interval share a block, so the size of the output is the size of the output of a single call, whatever the size of the chunks. Only a strict body, or a streamed body that is no larger than `chunkedThreshold`, is compressed in one call.
+The Play filter compresses a response as it is produced: a streamed or chunked response is not held in memory until it ends, and its compressed bytes are sent at the latest `flushInterval` (5 ms by default, rounded up to the tick of the scheduler) after the chunk that they come from is available. Chunks that arrive within the interval share a block, so the size of the output is the size of the output of a single call, whatever the size of the chunks. Only a strict body, or a streamed body that is no larger than `chunkedThreshold`, is compressed in one call. A chunked response is compressed in a single stage, which passes its last chunk and trailers after the compressed data, and a streamed body with a known length gets the window that fits it, like a body compressed in one call.
 
 The Akka and Pekko modules, which the filter is built on, are incremental as well:
 

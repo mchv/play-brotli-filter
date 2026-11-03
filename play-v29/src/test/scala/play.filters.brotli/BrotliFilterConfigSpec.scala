@@ -51,11 +51,13 @@ class BrotliFilterConfigSpec extends Specification {
     "match the documented defaults" in {
       val config = configured()
       config.quality must_== 5
+      config.streamQuality must_== 4
       config.window must_== -1
       config.mode must_== Encoder.Mode.GENERIC
-      config.bufferSize must_== 8192
+      config.bufferSize must_== 0
       config.chunkedThreshold must_== 102400
       config.threshold must_== 0
+      config.flushInterval must_== 5.millis
       isBrotlied(config, Some("image/png")) must beTrue
       isBrotlied(config, None) must beTrue
     }
@@ -64,11 +66,39 @@ class BrotliFilterConfigSpec extends Specification {
       val config = BrotliFilterConfig()
       val fromReference = configured()
       config.quality must_== fromReference.quality
+      config.streamQuality must_== fromReference.streamQuality
       config.window must_== fromReference.window
       config.mode must_== fromReference.mode
       config.bufferSize must_== fromReference.bufferSize
       config.chunkedThreshold must_== fromReference.chunkedThreshold
       config.threshold must_== fromReference.threshold
+      config.flushInterval must_== fromReference.flushInterval
+    }
+  }
+
+  "The stream quality" should {
+    "be read, and be the quality of the stream encoder parameters only" in {
+      val config = configured(s"$prefix.quality" -> 7, s"$prefix.streamQuality" -> 3, s"$prefix.window" -> 18, s"$prefix.mode" -> "text")
+      config.streamQuality must_== 3
+      config.streamEncoderParameters.quality() must_== 3
+      config.streamEncoderParameters.lgwin() must_== 18
+      config.streamEncoderParameters.mode() must_== Encoder.Mode.TEXT
+      config.encoderParameters.quality() must_== 7
+    }
+
+    "accept every value from 0 to 11 and -1 for the encoder default" in {
+      ((-1 to 11).map(q => configured(s"$prefix.streamQuality" -> q).streamEncoderParameters.quality() must_== q)).reduce(_ and _)
+    }
+
+    "be rejected outside -1 to 11, naming the setting" in {
+      (invalidMessage(configured(s"$prefix.streamQuality" -> 12)) must contain("streamQuality")) and
+        (invalidMessage(BrotliFilterConfig(streamQuality = -2)) must contain("streamQuality")) and
+        (invalidMessage(BrotliFilterConfig().withStreamQuality(12)) must contain("streamQuality"))
+    }
+
+    "give a new instance of the stream encoder parameters each time" in {
+      val config = BrotliFilterConfig()
+      config.streamEncoderParameters must not(beTheSameAs(config.streamEncoderParameters))
     }
   }
 
