@@ -93,7 +93,10 @@ class BrotliCompressor(val params: Encoder.Parameters) extends Compressor {
 
   /** Gives the input to the encoder in pieces of the size of its input buffer; `last` applies to the last piece. */
   private def feed(input: ByteString, last: EncoderJNI.Operation): ByteString =
-    if (input.isEmpty) {
+    if (closed) {
+      // The input buffer is native memory that is freed with the encoder: never write to it after that
+      throw new IllegalStateException("The Brotli compressor is closed")
+    } else if (input.isEmpty) {
       if (last == EncoderJNI.Operation.PROCESS) ByteString.empty else run(last, 0)
     } else {
       val buffer = encoder.getInputBuffer

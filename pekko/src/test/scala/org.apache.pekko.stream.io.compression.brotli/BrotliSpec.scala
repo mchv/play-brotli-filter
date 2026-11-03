@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicLong
 import scala.concurrent.duration._
 
 import org.apache.pekko.stream.io.compression.brotli.CoderSpec
-import org.apache.pekko.stream.impl.io.compression.{ Compressor, GzipCompressor }
+import org.apache.pekko.stream.impl.io.compression.{ CompressionUtils, Compressor, GzipCompressor }
 import org.apache.pekko.stream.scaladsl.{BrotliCompression, Flow, Keep, Sink, Source}
 import org.apache.pekko.stream.testkit.scaladsl.{TestSink, TestSource}
 import org.apache.pekko.util.ByteString
@@ -227,6 +227,16 @@ class BrotliSpec extends CoderSpec("brotli") {
       ourDecode(compressed).toArray should equal(data.toArray)
     }
 
+    "refuse input after it is closed or finished, instead of writing to the memory of a released encoder" in {
+      val closed = new BrotliCompressor(5)
+      closed.close()
+      an[IllegalStateException] should be thrownBy closed.compress(ByteString("data"))
+      an[IllegalStateException] should be thrownBy closed.compressAndFlush(ByteString("data"))
+      val finished = new BrotliCompressor(5)
+      finished.compressAndFinish(ByteString("data"))
+      an[IllegalStateException] should be thrownBy finished.compress(ByteString("data"))
+    }
+
     "be closable twice, and after finish" in {
       val unfinished = new BrotliCompressor(5)
       unfinished.compress(ByteString("data"))
@@ -252,6 +262,38 @@ class BrotliSpec extends CoderSpec("brotli") {
       BrotliCompressor.compress(rope, parameters) should equal(BrotliCompressor.compress(ByteString.fromArray(rope.toArray), parameters))
       BrotliCompressor.compress(rope.drop(2).take(8), parameters) should equal(
         ByteString(Encoder.compress("e two th".getBytes("UTF-8"), parameters)))
+    }
+
+    "release the native encoder when the stream completes, fails or is cancelled" in {
+      def released(compressor: BrotliCompressor): Boolean =
+        try {
+          compressor.flush() // fails before touching any native memory once the encoder is released
+          false
+        } catch { case _: IllegalStateException => true }
+      def awaitReleased(compressor: BrotliCompressor): Unit = {
+        val deadline = 5.seconds.fromNow
+        while (!released(compressor) && deadline.hasTimeLeft()) Thread.sleep(20)
+        released(compressor) should be(true)
+      }
+      def flowOf(compressor: BrotliCompressor) = CompressionUtils.compressorFlow(() => compressor)
+
+      val completed = new BrotliCompressor(5)
+      Source.single(ByteString("data")).via(flowOf(completed)).join.awaitResult(5.seconds)
+      awaitReleased(completed)
+
+      val failed = new BrotliCompressor(5)
+      Source(Vector(ByteString("data"))).concat(Source.failed(new RuntimeException("upstream failed")))
+        .via(flowOf(failed)).runWith(Sink.ignore).failed.awaitResult(5.seconds)
+      awaitReleased(failed)
+
+      val cancelled = new BrotliCompressor(5)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(flowOf(cancelled)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(ByteString("data"))
+      subscriber.expectNext(5.seconds)
+      subscriber.cancel()
+      awaitReleased(cancelled)
     }
   }
 }
