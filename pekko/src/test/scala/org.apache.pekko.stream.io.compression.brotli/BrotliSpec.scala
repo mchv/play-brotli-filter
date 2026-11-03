@@ -343,5 +343,90 @@ class BrotliSpec extends CoderSpec("brotli") {
       publisher.sendComplete()
       subscriber.expectComplete()
     }
+
+    "not flush between elements that arrive within the flush delay" in {
+      val pieces = Vector.tabulate(40)(i => ByteString(words(500)).drop(i * 7).take(2048))
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val oneCall = BrotliCompressor.compress(pieces.join, parameters).length
+      val unflushed = Source(pieces).via(BrotliCompression.brotli(parameters, 10.seconds)).join.awaitResult(5.seconds)
+      // Without a flush the output is the same as the output of a single call
+      unflushed.length should be(oneCall)
+      ourDecode(unflushed).toArray should equal(pieces.join.toArray)
+    }
+
+    "flush after every element when the flush delay is zero" in {
+      val pieces = Vector.tabulate(40)(i => ByteString(words(500)).drop(i * 7).take(2048))
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val flushed = Source(pieces).via(BrotliCompression.brotli(parameters, Duration.Zero)).join.awaitResult(5.seconds)
+      flushed.length should be > BrotliCompressor.compress(pieces.join, parameters).length
+      ourDecode(flushed).toArray should equal(pieces.join.toArray)
+      // every element can be decoded as it arrives
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, Duration.Zero)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(pieces.head)
+      subscriber.expectNext(2.seconds) should not be empty
+    }
+
+    "emit what it holds once the flush delay has passed, while the upstream is idle" in {
+      val piece = ByteString(words(2000))
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, 100.millis)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      val sent = System.nanoTime()
+      publisher.sendNext(piece)
+      val first = subscriber.expectNext(2.seconds)
+      val waited = (System.nanoTime() - sent) / 1000000
+      // after the delay, and not much later
+      waited should be >= 90L
+      waited should be < 1000L
+      // what was emitted decodes to the piece
+      val (decoderIn, decoderOut) =
+        TestSource.probe[ByteString].via(BrotliCompression.unbrotli()).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      decoderOut.request(Long.MaxValue)
+      decoderIn.sendNext(first)
+      var decoded = ByteString.empty
+      while (decoded.length < piece.length) decoded ++= decoderOut.expectNext(2.seconds)
+      decoded.toArray should equal(piece.toArray)
+      decoderIn.sendError(new RuntimeException("done"))
+      decoderOut.expectError()
+      publisher.sendComplete()
+      subscriber.request(Long.MaxValue)
+      subscriber.receiveWithin(2.seconds)
+    }
+
+    "keep what a flush emits while the downstream is not asking, and emit it in order" in {
+      val first = ByteString(words(1500))
+      val second = ByteString(words(1500)).reverse
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, 50.millis)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      publisher.sendNext(first)
+      Thread.sleep(300) // the flush happens without any demand
+      subscriber.request(1)
+      val emitted = subscriber.expectNext(2.seconds)
+      publisher.sendNext(second)
+      publisher.sendComplete()
+      subscriber.request(Long.MaxValue)
+      val rest = subscriber.receiveWithin(2.seconds)
+      val all = rest.foldLeft(emitted)(_ ++ _)
+      ourDecode(all).toArray should equal((first ++ second).toArray)
+    }
+
+    "stop the delayed flush flow when it is cancelled, and fail it when its upstream fails" in {
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, 20.millis)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(ByteString("data"))
+      subscriber.expectNext(2.seconds)
+      subscriber.cancel()
+      publisher.expectCancellation()
+      val failing = TestSource.probe[ByteString].via(BrotliCompression.brotli(parameters, 20.millis)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      failing._1.sendError(new RuntimeException("upstream failed"))
+      failing._2.request(1)
+      failing._2.expectError()
+    }
   }
 }

@@ -21,8 +21,10 @@ import akka.stream.impl.io.compression._
 import akka.stream.scaladsl.Flow
 import akka.util.ByteString
 
+import scala.concurrent.duration.FiniteDuration
+
 import com.aayushatharva.brotli4j.encoder.Encoder
-import akka.stream.io.compression.brotli.{BrotliCompressor, BrotliDecompressor}
+import akka.stream.io.compression.brotli.{BrotliCompressor, BrotliDecompressor, BrotliFlushingCompressor}
 
 object BrotliCompression {
 
@@ -52,6 +54,18 @@ object BrotliCompression {
    */
   def brotli(parameters: Encoder.Parameters): Flow[ByteString, ByteString, NotUsed] =
     CompressionUtils.compressorFlow(() => new BrotliCompressor(parameters))
+
+  /**
+   * Creates a flow that brotli-compresses a stream of ByteStrings, and flushes the encoder only at the end of the stream
+   * and when the oldest data that it holds has waited for `maxFlushDelay`. A flush ends a block, which costs compressed
+   * size and CPU when the elements are small (see `brotli(parameters)`, which flushes after every element); elements
+   * that arrive within the delay share a block, and the output is the same as the output of a single call.
+   *
+   * @param maxFlushDelay the longest time that data waits in the encoder; zero flushes after every element
+   */
+  def brotli(parameters: Encoder.Parameters, maxFlushDelay: FiniteDuration): Flow[ByteString, ByteString, NotUsed] =
+    if (maxFlushDelay.length <= 0) brotli(parameters)
+    else Flow[ByteString].via(new BrotliFlushingCompressor(parameters, maxFlushDelay)).named("brotli")
 
   /**
    * Creates a Flow that decompresses a brotli-compressed stream of data. The decompressed data is emitted as it is
