@@ -28,9 +28,20 @@ object BrotliCompressor {
     val DefaultQuality: Int = MaxQuality
 }
 
-class BrotliCompressor(level: Int = BrotliCompressor.DefaultQuality) extends Compressor {
+/**
+ * Compresses with brotli using the given encoder parameters (quality, window and mode).
+ *
+ * The parameters are only read, never modified, so they can be shared between compressors.
+ */
+class BrotliCompressor(val params: Encoder.Parameters) extends Compressor {
 
-  val params = new Encoder.Parameters().setQuality(level)
+  /**
+   * Compresses with the given quality and the default window and mode.
+   *
+   * @param level The quality, from 0 (fastest) to 11 (smallest output), or -1 for the encoder default (11)
+   */
+  def this(level: Int = BrotliCompressor.DefaultQuality) = this(new Encoder.Parameters().setQuality(level))
+
   val buffer = scala.collection.mutable.ListBuffer.empty[ByteString]
 
   /**

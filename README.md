@@ -38,7 +38,7 @@ Add as a dependency:
 
 ## Configure
 
-Currently the only parameter you can configure is quality, which defaults to `11`.
+The filter is configured under `play.filters.brotli`. All the settings are optional, these are the defaults:
 
 ```
 play.filters {
@@ -46,9 +46,56 @@ play.filters {
   # Brotli filter configuration
   brotli {
 
-    # The compression-speed vs compression-density tradeoffs. The higher the quality, the slower the compression. Range is 0 to 11
-    quality = 11
+    # The compression-speed vs compression-density tradeoffs. The higher the quality, the slower the compression.
+    # Range is 0 (fastest, largest output) to 11 (slowest, smallest output). -1 uses the default of the brotli
+    # encoder, which is 11.
+    quality = 5
+
+    # The log2 of the sliding window size, from 10 (1 KiB) to 24 (16 MiB). A larger window can find more repetitions in
+    # large responses but needs more memory, also in the browser. -1 uses the default of the brotli encoder.
+    window = -1
+
+    # The kind of content the encoder is tuned for: "generic", "text" (UTF-8 text) or "font" (WOFF 2.0 fonts).
+    mode = "generic"
+
+    # The maximum amount of data to send to the brotli compressor in one go. Use `0` or `2147483647` to disable the buffering.
+    bufferSize = 8k
+
+    # The maximum amount of content to buffer for compressing with brotli in order to calculate the content length before falling back
+    # to chunked encoding.
+    chunkedThreshold = 100k
+
+    contentType {
+
+      # If non empty, then a response will only be compressed if its content type is in this list.
+      whiteList = []
+
+      # The black list is only used if the white list is empty.
+      # Compress all responses except the ones whose content type is in this list.
+      blackList = []
+    }
+
+    # The byte threshold for the response body size which controls if a response should be compressed (e.g. 1k).
+    # Responses of this size or smaller are not compressed. If the body size cannot be determined, then it is assumed
+    # to be over the threshold.
+    threshold = 0
 
   }
 }
 ```
+
+For example, to only compress text and JSON responses, and only when they are larger than 1 KiB:
+
+```
+play.filters.brotli {
+  contentType.whiteList = ["text/*", "application/json"]
+  threshold = 1k
+}
+```
+
+* **Quality:** the default is `5`, because the highest quality, `11`, is much slower and is rarely worth it when compressing responses on the fly. Set it to `11` or `-1` for the smallest output, for example when the responses are cached.
+* **Content types:** an entry is a media type such as `text/html`, `text/*` or `*/*`. The matching ignores the case and the parameters (`; charset=utf-8`) of the response content type. With a white list, a response without a content type is not compressed. With only a black list, it is.
+* **Invalid values:** the application fails to start with a message that names the setting, for example when the quality is above 11 or an entry of a content type list is not a media type.
+* **Code:** `BrotliFilterConfig` has the same settings (`withQuality`, `withWindow`, `withMode`, `withBufferSize`, `withChunkedThreshold`, `withThreshold` and `withShouldBrotli`) for filters that are not created from the configuration.
+
+The Akka and Pekko stream modules compress with `BrotliCompression.brotli(level)`, or with `BrotliCompression.brotli(parameters)` to also set the window and the mode through a brotli4j `Encoder.Parameters`.

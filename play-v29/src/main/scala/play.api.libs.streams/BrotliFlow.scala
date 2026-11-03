@@ -18,6 +18,8 @@ package play.api.libs.streams
 
 import java.util.zip.Deflater
 
+import com.aayushatharva.brotli4j.encoder.Encoder
+
 import akka.stream.scaladsl.BrotliCompression
 import akka.stream.scaladsl.Flow
 import akka.stream.stage._
@@ -30,6 +32,10 @@ import akka.util.ByteString
  * Brotlis each chunk separately.
  */
 object BrotliFlow {
+
+  /** The compression level used when none is given. */
+  val DefaultCompressionLevel: Int = 9
+
   /**
    * Create a Brotli Flow with the given buffer size. The bufferSize controls how much data is sent to the Brotli compressor in
    * one go. You can use `0` or `Int.MaxValue` to disable the buffer completely.
@@ -38,15 +44,22 @@ object BrotliFlow {
    */
   def brotli(
       bufferSize: Int = 512,
-      compressionLevel: Int = 9 // TODO use constants 
-  ): Flow[ByteString, ByteString, _] = {
+      compressionLevel: Int = DefaultCompressionLevel
+  ): Flow[ByteString, ByteString, _] =
+    brotli(bufferSize, new Encoder.Parameters().setQuality(compressionLevel))
+
+  /**
+   * Create a Brotli Flow with the given buffer size and encoder parameters, which set the quality, the window and
+   * the mode. See the other `brotli` method for the buffer size.
+   */
+  def brotli(bufferSize: Int, parameters: Encoder.Parameters): Flow[ByteString, ByteString, _] = {
     Flow[ByteString]
       .via(chunkerIfNeeded(bufferSize))
-      .via(BrotliCompression.brotli(compressionLevel))
+      .via(BrotliCompression.brotli(parameters))
   }
 
   private def chunkerIfNeeded(bufferSize: Int): Flow[ByteString, ByteString, Any] =
-    if (bufferSize > 0 || bufferSize < Int.MaxValue) Flow.fromGraph(new Chunker(bufferSize))
+    if (bufferSize > 0 && bufferSize < Int.MaxValue) Flow.fromGraph(new Chunker(bufferSize))
     else Flow[ByteString]
 
   // http://doc.akka.io/docs/akka/2.4.14/scala/stream/stream-cookbook.html#Chunking_up_a_stream_of_ByteStrings_into_limited_size_ByteStrings

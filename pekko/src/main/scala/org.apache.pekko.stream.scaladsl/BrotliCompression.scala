@@ -21,6 +21,7 @@ import org.apache.pekko.stream.impl.io.compression._
 import org.apache.pekko.stream.scaladsl.Flow
 import org.apache.pekko.util.ByteString
 
+import com.aayushatharva.brotli4j.encoder.Encoder
 import org.apache.pekko.stream.io.compression.brotli.{BrotliCompressor, BrotliDecompressor}
 
 object BrotliCompression {
@@ -40,10 +41,17 @@ object BrotliCompression {
    *
    * FIXME: should strategy / flush mode be configurable? See https://github.com/akka/akka/issues/21849
    *
-   * @param level Compression level (0-11)
+   * @param level Compression level (0-11), or -1 for the encoder default (11)
    */
   def brotli(level: Int = BrotliCompressor.DefaultQuality): Flow[ByteString, ByteString, NotUsed] =
     CompressionUtils.compressorFlow(() => new BrotliCompressor(level))
+
+  /**
+   * Creates a flow that brotli-compresses a stream of ByteStrings with the given encoder parameters, which set
+   * the quality, the window and the mode. The parameters are only read, so they can be shared.
+   */
+  def brotli(parameters: Encoder.Parameters): Flow[ByteString, ByteString, NotUsed] =
+    CompressionUtils.compressorFlow(() => new BrotliCompressor(parameters))
 
   /**
    * Creates a Flow that decompresses a brotli-compressed stream of data.
