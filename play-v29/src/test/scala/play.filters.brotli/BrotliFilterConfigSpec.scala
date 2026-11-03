@@ -16,6 +16,8 @@
 package play.filters.brotli
 
 import com.aayushatharva.brotli4j.encoder.Encoder
+import scala.concurrent.duration._
+
 import org.specs2.mutable.Specification
 import play.api.Configuration
 import play.api.http.HttpEntity
@@ -236,6 +238,25 @@ class BrotliFilterConfigSpec extends Specification {
     "be rejected in the black list, naming the setting" in {
       val message = invalidMessage(configured(s"$prefix.contentType.blackList" -> Seq("text/html", "*")))
       (message must contain("contentType.blackList"))
+    }
+  }
+
+  "The flush interval" should {
+    "default to 5 milliseconds, in the configuration and in code" in {
+      configured().flushInterval must_== 5.millis
+      BrotliFilterConfig().flushInterval must_== 5.millis
+    }
+
+    "be read as a duration, and 0 flushes after every element" in {
+      configured(s"$prefix.flushInterval" -> "20 ms").flushInterval must_== 20.millis
+      configured(s"$prefix.flushInterval" -> "1 second").flushInterval must_== 1.second
+      configured(s"$prefix.flushInterval" -> "0").flushInterval must_== Duration.Zero
+      BrotliFilterConfig().withFlushInterval(Duration.Zero).flushInterval must_== Duration.Zero
+    }
+
+    "be rejected when negative" in {
+      invalidMessage(configured(s"$prefix.flushInterval" -> "-1 ms")) must contain("flushInterval")
+      invalidMessage(BrotliFilterConfig(flushInterval = (-1).millis)) must contain("flushInterval")
     }
   }
 }

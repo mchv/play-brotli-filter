@@ -31,6 +31,7 @@ import play.api.mvc._
 import play.api.libs.streams.BrotliFlow
 import akka.stream.io.compression.brotli.BrotliCompressor
 import scala.concurrent.{ Future, ExecutionContextExecutor}
+import scala.concurrent.duration._
 import play.api.http.{ HttpChunk, HttpEntity, Status }
 import scala.compat.java8.FunctionConverters._
 
@@ -71,8 +72,9 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
     shouldBrotli: (RequestHeader, Result) => Boolean = (_, _) => true,
     threshold: Int = 0,
     window: Int = -1,
-    mode: Encoder.Mode = Encoder.Mode.GENERIC)(implicit mat: Materializer) = {
-      this(BrotliFilterConfig(quality, bufferSize, chunkedThreshold, shouldBrotli, threshold, window, mode))
+    mode: Encoder.Mode = Encoder.Mode.GENERIC,
+    flushInterval: FiniteDuration = 5.millis)(implicit mat: Materializer) = {
+      this(BrotliFilterConfig(quality, bufferSize, chunkedThreshold, shouldBrotli, threshold, window, mode, flushInterval))
     }
 
 
@@ -151,7 +153,7 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
 
   
   private def createBrotliFlow: Flow[ByteString, ByteString, _] =
-    BrotliFlow.brotli(config.bufferSize, config.encoderParameters)
+    BrotliFlow.brotli(config.bufferSize, config.encoderParameters, config.flushInterval)
 
   private def compressStrictEntity(data: ByteString, contentType: Option[String]) =
     HttpEntity.Strict(BrotliCompressor.compress(data, config.encoderParameters), contentType)
@@ -226,6 +228,10 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
  *                  assumed to be over the threshold.
  * @param window The log2 of the sliding window size. Range is 10 to 24, or -1 for the default of the brotli encoder.
  * @param mode The kind of content the encoder is tuned for: generic, text or font.
+ * @param flushInterval The longest time that compressed data of a streamed or chunked response waits in the encoder. The
+ *                      encoder is flushed only when its oldest data has waited that long, and at the end of the response:
+ *                      flushing after every chunk, as the gzip filter does, costs compressed size and CPU when the chunks are
+ *                      small. Zero flushes after every chunk.
  */
 case class BrotliFilterConfig(quality: Int = 5,
     bufferSize: Int = 8192,
@@ -233,7 +239,8 @@ case class BrotliFilterConfig(quality: Int = 5,
     shouldBrotli: (RequestHeader, Result) => Boolean = (_, _) => true,
     threshold: Int = 0,
     window: Int = -1,
-    mode: Encoder.Mode = Encoder.Mode.GENERIC) {
+    mode: Encoder.Mode = Encoder.Mode.GENERIC,
+    flushInterval: FiniteDuration = 5.millis) {
 
   if (quality < -1 || quality > 11) {
     throw new IllegalArgumentException(
@@ -248,6 +255,9 @@ case class BrotliFilterConfig(quality: Int = 5,
   }
   if (threshold < 0) {
     throw new IllegalArgumentException(s"Invalid brotli threshold $threshold: it must not be negative")
+  }
+  if (flushInterval.length < 0) {
+    throw new IllegalArgumentException(s"Invalid brotli flushInterval $flushInterval: it must not be negative")
   }
 
   // alternate constructor and builder methods for Java
@@ -269,6 +279,8 @@ case class BrotliFilterConfig(quality: Int = 5,
   def withWindow(window: Int): BrotliFilterConfig = copy(window = window)
 
   def withMode(mode: Encoder.Mode): BrotliFilterConfig = copy(mode = mode)
+
+  def withFlushInterval(interval: FiniteDuration): BrotliFilterConfig = copy(flushInterval = interval)
 
   /**
    * The parameters for the brotli encoder. brotli4j parameters are mutable, so each call returns a new instance.
@@ -293,7 +305,8 @@ object BrotliFilterConfig {
       ),
       threshold = memorySize(config, "threshold"),
       window = config.get[Int]("window"),
-      mode = parseMode(config.get[String]("mode"))
+      mode = parseMode(config.get[String]("mode")),
+      flushInterval = config.get[FiniteDuration]("flushInterval")
     )
   }
 
