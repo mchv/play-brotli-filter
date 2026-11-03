@@ -98,4 +98,14 @@ play.filters.brotli {
 * **Invalid values:** the application fails to start with a message that names the setting, for example when the quality is above 11 or an entry of a content type list is not a media type.
 * **Code:** `BrotliFilterConfig` has the same settings (`withQuality`, `withWindow`, `withMode`, `withBufferSize`, `withChunkedThreshold`, `withThreshold` and `withShouldBrotli`) for filters that are not created from the configuration.
 
-The Akka and Pekko stream modules compress with `BrotliCompression.brotli(level)`, or with `BrotliCompression.brotli(parameters)` to also set the window and the mode through a brotli4j `Encoder.Parameters`.
+## Streaming
+
+The Play filter compresses a response as it is produced: a streamed or chunked response is not held in memory until it ends, and its first compressed bytes are sent when its first chunk is available. Only a strict body, or a streamed body that is no larger than `chunkedThreshold`, is compressed in one call.
+
+The Akka and Pekko modules, which the filter is built on, are incremental as well:
+
+* `BrotliCompression.brotli(level)` compresses a stream. `BrotliCompression.brotli(parameters)` takes a brotli4j `Encoder.Parameters` to also set the window and the mode. Like the gzip flow, they flush after every element, so that every element that comes out can be decoded as it arrives. Flushing costs compression ratio when the elements are small. For a 140 KB css file at quality 5, compared with compressing it in one call, elements of 16 KB cost 1%, elements of 8 KB cost 2%, elements of 1 KB cost 16% and elements of 256 bytes cost 56%. If the ratio matters more than the latency, batch the small elements before the flow.
+* `BrotliCompression.unbrotli()` decompresses a stream and emits the decoded data as it is produced, in pieces of at most 64 KiB, whatever the size of the pieces it receives. For input that you do not trust, use `BrotliCompression.unbrotli(maxOutputSize)`: brotli can expand a few kilobytes into gigabytes. The stream fails as soon as the output would exceed the limit, and nothing beyond the limit is emitted. The stream also fails when the input is truncated, corrupt, or followed by other data.
+* `BrotliCompressor.compress(data, parameters)` compresses a body that is already in memory in one call.
+
+The [benchmarks](bench/README.md) measure these against a single native brotli4j call.

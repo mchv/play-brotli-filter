@@ -28,18 +28,18 @@ object BrotliCompression {
 
   val DefaultQuality: Int = BrotliCompressor.DefaultQuality
 
-  //TODO improve comment
-
-  def brotli: Flow[ByteString, ByteString, NotUsed] = 
+  /**
+   * Creates a flow that brotli-compresses a stream of ByteStrings with the default quality (11).
+   * See `brotli(level)`.
+   */
+  def brotli: Flow[ByteString, ByteString, NotUsed] =
     CompressionUtils.compressorFlow(() => new BrotliCompressor())
 
   /**
-   * Creates a flow that gzip-compresses a stream of ByteStrings. Note that the compressor
-   * will SYNC_FLUSH after every [[ByteString]] so that it is guaranteed that every [[ByteString]]
+   * Creates a flow that brotli-compresses a stream of ByteStrings. Note that the compressor
+   * will flush after every [[ByteString]] so that it is guaranteed that every [[ByteString]]
    * coming out of the flow can be fully decompressed without waiting for additional data. This may
    * come at a compression performance cost for very small chunks.
-   *
-   * FIXME: should strategy / flush mode be configurable? See https://github.com/akka/akka/issues/21849
    *
    * @param level Compression level (0-11), or -1 for the encoder default (11)
    */
@@ -54,9 +54,19 @@ object BrotliCompression {
     CompressionUtils.compressorFlow(() => new BrotliCompressor(parameters))
 
   /**
-   * Creates a Flow that decompresses a brotli-compressed stream of data.
+   * Creates a Flow that decompresses a brotli-compressed stream of data. The decompressed data is emitted as it is
+   * produced, in pieces of at most 64 KiB, and is not limited in size: see `unbrotli(maxOutputSize)`.
    */
-  def unbrotli(): Flow[ByteString, ByteString, NotUsed] =
-    Flow[ByteString].via(new BrotliDecompressor()).named("unbrotli")
+  def unbrotli(): Flow[ByteString, ByteString, NotUsed] = unbrotli(0L)
+
+  /**
+   * Creates a Flow that decompresses a brotli-compressed stream of data, and fails when the decompressed data would
+   * exceed `maxOutputSize` bytes. Use the limit for untrusted input: brotli can expand a few kilobytes into
+   * gigabytes. No data beyond the limit is emitted.
+   *
+   * @param maxOutputSize the maximum number of decompressed bytes, or 0 for no limit
+   */
+  def unbrotli(maxOutputSize: Long): Flow[ByteString, ByteString, NotUsed] =
+    Flow[ByteString].via(new BrotliDecompressor(maxOutputSize)).named("unbrotli")
 
 }

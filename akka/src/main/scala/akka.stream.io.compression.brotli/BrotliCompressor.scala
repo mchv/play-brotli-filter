@@ -16,24 +16,46 @@
 
 package akka.stream.io.compression.brotli
 
+import java.io.IOException
 
-import akka.util.ByteString
+import com.aayushatharva.brotli4j.encoder.{ Encoder, EncoderJNI }
+
 import akka.stream.impl.io.compression.Compressor
-import com.aayushatharva.brotli4j.encoder.Encoder
-
+import akka.util.ByteString
 
 object BrotliCompressor {
-    val MinQuality: Int = 0
-    val MaxQuality: Int = 11
-    val DefaultQuality: Int = MaxQuality
+  val MinQuality: Int = 0
+  val MaxQuality: Int = 11
+  val DefaultQuality: Int = MaxQuality
+
+  /** The size of the input buffer of the native encoder, which is also the size of the pieces that it is fed with. */
+  private val InputBufferSize = 16 * 1024
+
+  /**
+   * Compresses a whole body in one call, which is faster than a [[BrotliCompressor]] for a body that is already in
+   * memory: no stream is created, and the body is not copied if it is a compact [[ByteString]].
+   *
+   * @param parameters the quality, the window and the mode of the encoder. They are only read.
+   */
+  def compress(data: ByteString, parameters: Encoder.Parameters): ByteString =
+    ByteString.fromArrayUnsafe(Encoder.compress(data.toArrayUnsafe(), parameters))
 }
 
 /**
  * Compresses with brotli using the given encoder parameters (quality, window and mode).
  *
+ * The compression is incremental: the input is given to the native encoder as it arrives and the compressed data is
+ * returned as soon as the encoder produces it, so the memory used does not depend on the size of the stream.
+ * `compress` leaves the encoder to decide when to emit, while `flush` and `compressAndFlush` end the current block so
+ * that everything given so far can be decoded, at a small cost in compression ratio when the pieces are small.
+ *
+ * The native encoder is released by `finish`, or by `close` when the stream is aborted. A compressor must not be
+ * used from several threads.
+ *
  * The parameters are only read, never modified, so they can be shared between compressors.
  */
 class BrotliCompressor(val params: Encoder.Parameters) extends Compressor {
+  import BrotliCompressor.InputBufferSize
 
   /**
    * Compresses with the given quality and the default window and mode.
@@ -42,47 +64,69 @@ class BrotliCompressor(val params: Encoder.Parameters) extends Compressor {
    */
   def this(level: Int = BrotliCompressor.DefaultQuality) = this(new Encoder.Parameters().setQuality(level))
 
-  val buffer = scala.collection.mutable.ListBuffer.empty[ByteString]
+  private val encoder = new EncoderJNI.Wrapper(InputBufferSize, params.quality(), params.lgwin(), params.mode())
+  private var closed = false
 
-  /**
-   * Compresses the given input and returns compressed data. The implementation
-   * can and will choose to buffer output data to improve compression. Use
-   * `flush` or `compressAndFlush` to make sure that all input data has been
-   * compressed and pending output data has been returned.
-   */
-  override final def compress(input: ByteString): ByteString = {
-     buffer += input
-     ByteString.empty
-  }
+  /** Compresses the input, and returns the compressed data that the encoder has produced so far, if any. */
+  override final def compress(input: ByteString): ByteString = feed(input, EncoderJNI.Operation.PROCESS)
 
-  /**
-   * Flushes any output data and returns the currently remaining compressed data.
-   */
-  override final def flush(): ByteString = {
-    ByteString.empty
-  }
+  /** Ends the current block and returns all the compressed data that is pending. */
+  override final def flush(): ByteString = run(EncoderJNI.Operation.FLUSH, 0)
 
-  /**
-   * Closes this compressed stream and return the remaining compressed data. After
-   * calling this method, this Compressor cannot be used any further.
-   */
-  override final def finish(): ByteString = {
-    val input: ByteString = buffer.toList.foldLeft(ByteString.empty)(_ ++ _)
-    val output = Encoder.compress(input.toArray, params)
-    ByteString(output)
-  }
+  /** Ends the stream and returns the compressed data that is pending. Releases the native encoder. */
+  override final def finish(): ByteString =
+    try run(EncoderJNI.Operation.FINISH, 0)
+    finally close()
 
   /** Combines `compress` + `flush` */
-  override final def compressAndFlush(input: ByteString): ByteString = {
-    compress(input)
-  }
+  override final def compressAndFlush(input: ByteString): ByteString = feed(input, EncoderJNI.Operation.FLUSH)
 
   /** Combines `compress` + `finish` */
-  override final def compressAndFinish(input: ByteString): ByteString = {
-    compress(input) ++ finish()
+  override final def compressAndFinish(input: ByteString): ByteString = compress(input) ++ finish()
+
+  /** Releases the native encoder, if `finish` has not done it. Can be called more than once. */
+  override final def close(): Unit =
+    if (!closed) {
+      closed = true
+      encoder.destroy()
+    }
+
+  /** Gives the input to the encoder in pieces of the size of its input buffer; `last` applies to the last piece. */
+  private def feed(input: ByteString, last: EncoderJNI.Operation): ByteString =
+    if (closed) {
+      // The input buffer is native memory that is freed with the encoder: never write to it after that
+      throw new IllegalStateException("The Brotli compressor is closed")
+    } else if (input.isEmpty) {
+      if (last == EncoderJNI.Operation.PROCESS) ByteString.empty else run(last, 0)
+    } else {
+      val buffer = encoder.getInputBuffer
+      var output = ByteString.empty
+      var rest = input
+      while (rest.nonEmpty) {
+        buffer.clear()
+        val size = rest.copyToBuffer(buffer)
+        rest = rest.drop(size)
+        output ++= run(if (rest.isEmpty) last else EncoderJNI.Operation.PROCESS, size)
+      }
+      output
+    }
+
+  /** Runs the operation on the `length` bytes of the input buffer and returns the compressed data it produces. */
+  private def run(operation: EncoderJNI.Operation, length: Int): ByteString = {
+    var output = ByteString.empty
+    encoder.push(operation, length)
+    var running = true
+    while (running) {
+      if (!encoder.isSuccess) throw new IOException("Brotli encoding failed")
+      else if (encoder.hasMoreOutput) {
+        val buffer = encoder.pull()
+        val bytes = new Array[Byte](buffer.remaining())
+        buffer.get(bytes)
+        output ++= ByteString.fromArrayUnsafe(bytes)
+      } else if (encoder.hasRemainingInput) encoder.push(operation, 0)
+      else if (operation == EncoderJNI.Operation.FINISH && !encoder.isFinished) encoder.push(operation, 0)
+      else running = false
+    }
+    output
   }
-
-  /** Make sure any resources have been released */
-  override final def close(): Unit = {} 
-
 }

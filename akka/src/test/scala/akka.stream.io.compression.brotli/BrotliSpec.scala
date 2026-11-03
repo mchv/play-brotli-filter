@@ -12,11 +12,15 @@ import com.aayushatharva.brotli4j.decoder.BrotliInputStream;
 import com.aayushatharva.brotli4j.encoder.Encoder
 import java.util.zip.ZipException
 
+import java.util.concurrent.{ CountDownLatch, TimeUnit }
+import java.util.concurrent.atomic.AtomicLong
+
 import scala.concurrent.duration._
 
 import akka.stream.io.compression.brotli.CoderSpec
-import akka.stream.impl.io.compression.{ Compressor, GzipCompressor }
-import akka.stream.scaladsl.{Flow, BrotliCompression, Source}
+import akka.stream.impl.io.compression.{ CompressionUtils, Compressor, GzipCompressor }
+import akka.stream.scaladsl.{BrotliCompression, Flow, Keep, Sink, Source}
+import akka.stream.testkit.scaladsl.{TestSink, TestSource}
 import akka.util.ByteString
 
 class BrotliSpec extends CoderSpec("brotli") {
@@ -27,10 +31,18 @@ class BrotliSpec extends CoderSpec("brotli") {
     Brotli4jLoader.ensureAvailability();
   }
 
-  private def wordsText: String = {
+  /**
+   * Compares the bytes of two ByteStrings. `ByteString.equals` looks every element up in the pieces of a rope, which takes
+   * minutes for a few megabytes on Scala 2.12: use this for anything larger than a piece of the decoder (64 KiB).
+   */
+  private def sameBytes(actual: ByteString, expected: ByteString) = actual.toArray should equal(expected.toArray)
+
+  private def wordsText: String = words(8000)
+
+  private def words(count: Int): String = {
     val random = new scala.util.Random(42)
     val vocabulary = Vector("alpha", "beta", "gamma", "delta", "akka", "brotli", "stream", "flow")
-    Iterator.continually(vocabulary(random.nextInt(vocabulary.size))).take(8000).mkString(" ")
+    Iterator.continually(vocabulary(random.nextInt(vocabulary.size))).take(count).mkString(" ")
   }
 
   // High entropy text: it can only be compressed by repeating it, which needs a large enough window
@@ -101,7 +113,235 @@ class BrotliSpec extends CoderSpec("brotli") {
       val parameters = new Encoder.Parameters().setQuality(3).setWindow(12).setMode(Encoder.Mode.TEXT)
       val compressed = Source.single(largeTextBytes).via(BrotliCompression.brotli(parameters)).join.awaitResult(3.seconds)
       ourDecode(compressed) should equal(largeTextBytes)
-      compressed should equal(new BrotliCompressor(parameters).compressAndFinish(largeTextBytes))
+    }
+
+    "decode a stream that arrives one byte at a time without redecoding what it has already decoded" in {
+      val data = ByteString(words(400000))
+      val compressed = new BrotliCompressor(5).compressAndFinish(data)
+      val pieces = compressed.grouped(1).toVector
+      pieces.length should be > 10000
+      val decoded = Source(pieces).via(BrotliCompression.unbrotli()).join.awaitResult(10.seconds)
+      sameBytes(decoded, data)
+    }
+
+    "emit the decoded data before the whole stream has arrived" in {
+      val data = ByteString(words(200000))
+      val compressed = new BrotliCompressor(5).compressAndFinish(data)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.unbrotli()).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(compressed.take(compressed.length / 2))
+      val first = subscriber.expectNext(5.seconds)
+      first should not be empty
+      data.startsWith(first) should be(true)
+      publisher.sendNext(compressed.drop(compressed.length / 2))
+      publisher.sendComplete()
+      subscriber.request(Long.MaxValue)
+      val rest = subscriber.receiveWithin(5.seconds)
+      sameBytes(first ++ rest.join, data)
+    }
+
+    "emit the decoded data in chunks of a bounded size" in {
+      val data = ByteString(new Array[Byte](3 * 1024 * 1024))
+      val compressed = new BrotliCompressor(1).compressAndFinish(data)
+      val chunks = Source.single(compressed).via(BrotliCompression.unbrotli()).runWith(Sink.seq).awaitResult(10.seconds)
+      chunks.map(_.length).sum should be(data.length)
+      chunks.map(_.length).max should be <= 65536
+    }
+
+    "fail without emitting more than the limit when the decompressed output exceeds it" in {
+      val limit = 1024 * 1024L
+      val data = ByteString(new Array[Byte](20 * 1024 * 1024))
+      val compressed = BrotliCompressor.compress(data, new Encoder.Parameters().setQuality(1))
+      compressed.length should be < 10000
+      val emitted = new AtomicLong
+      val result = Source.single(compressed)
+        .via(BrotliCompression.unbrotli(limit))
+        .map { chunk => emitted.addAndGet(chunk.length.toLong); chunk }
+        .runWith(Sink.ignore)
+      val failure = the[RuntimeException] thrownBy result.awaitResult(10.seconds)
+      failure.ultimateCause.getMessage should (include("exceeds") and include(limit.toString))
+      emitted.get should be <= limit
+    }
+
+    "decode output of exactly the limit" in {
+      val data = ByteString(new Array[Byte](1024 * 1024))
+      val compressed = new BrotliCompressor(1).compressAndFinish(data)
+      val decoded = Source.single(compressed).via(BrotliCompression.unbrotli(data.length.toLong)).join.awaitResult(10.seconds)
+      sameBytes(decoded, data)
+    }
+
+    "not limit the output by default, and detect the end of an output that is a multiple of the window" in {
+      // 8 MiB is twice the 4 MiB window of the default encoder: the decoder reports the end of the stream only after
+      // it has been given a chance to finish
+      val data = ByteString(new Array[Byte](8 * 1024 * 1024))
+      val compressed = new BrotliCompressor(1).compressAndFinish(data)
+      Source.single(compressed).via(BrotliCompression.unbrotli()).join.awaitResult(10.seconds).length should be(data.length)
+    }
+
+    "decode an empty stream and an empty input" in {
+      val empty = new BrotliCompressor(5).compressAndFinish(ByteString.empty)
+      ourDecode(empty) should equal(ByteString.empty)
+      Source.empty[ByteString].via(BrotliCompression.unbrotli()).join.awaitResult(5.seconds) should equal(ByteString.empty)
+    }
+
+    "fail on data after the end of the stream, in the same piece or in a later one" in {
+      val data = ByteString(words(1000))
+      val compressed = new BrotliCompressor(5).compressAndFinish(data)
+      val trailing = ByteString("trailing bytes")
+      a[RuntimeException] should be thrownBy ourDecode(compressed ++ trailing)
+      a[RuntimeException] should be thrownBy
+        Source(Vector(compressed, trailing)).via(BrotliCompression.unbrotli()).join.awaitResult(5.seconds)
+    }
+
+    "emit compressed data before the upstream completes" in {
+      val chunk = ByteString(words(20000))
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.brotli(5)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(chunk)
+      val first = subscriber.expectNext(5.seconds)
+      first should not be empty
+      // what was emitted for the chunk decodes to the chunk, without waiting for the end of the stream
+      val (decoderIn, decoderOut) =
+        TestSource.probe[ByteString].via(BrotliCompression.unbrotli()).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      decoderOut.request(Long.MaxValue)
+      decoderIn.sendNext(first)
+      var decoded = ByteString.empty
+      while (decoded.length < chunk.length) decoded ++= decoderOut.expectNext(5.seconds)
+      sameBytes(decoded, chunk)
+      decoderIn.sendError(new RuntimeException("done"))
+      decoderOut.expectError()
+      publisher.sendComplete()
+      subscriber.request(Long.MaxValue)
+      subscriber.receiveWithin(5.seconds)
+    }
+
+    "emit the data of every element so that the output decodes as it goes" in {
+      val pieces = Vector("first piece ", "second piece ", "third piece").map(ByteString(_))
+      val compressor = new BrotliCompressor(5)
+      val outputs = pieces.map(compressor.compressAndFlush)
+      outputs.foreach(_ should not be empty)
+      val all = outputs.join ++ compressor.finish()
+      ourDecode(all) should equal(pieces.join)
+    }
+
+    "compress input larger than the input buffer of the encoder" in {
+      val data = ByteString(words(300000))
+      data.length should be > 1024 * 1024
+      val compressor = new BrotliCompressor(5)
+      val compressed = compressor.compress(data) ++ compressor.finish()
+      sameBytes(ourDecode(compressed), data)
+    }
+
+    "refuse input after it is closed or finished, instead of writing to the memory of a released encoder" in {
+      val closed = new BrotliCompressor(5)
+      closed.close()
+      an[IllegalStateException] should be thrownBy closed.compress(ByteString("data"))
+      an[IllegalStateException] should be thrownBy closed.compressAndFlush(ByteString("data"))
+      val finished = new BrotliCompressor(5)
+      finished.compressAndFinish(ByteString("data"))
+      an[IllegalStateException] should be thrownBy finished.compress(ByteString("data"))
+    }
+
+    "be closable twice, and after finish" in {
+      val unfinished = new BrotliCompressor(5)
+      unfinished.compress(ByteString("data"))
+      unfinished.close()
+      unfinished.close()
+      val finished = new BrotliCompressor(5)
+      finished.compressAndFinish(ByteString("data"))
+      finished.close()
+    }
+
+    "compress a strict body in one call" in {
+      val parameters = new Encoder.Parameters().setQuality(5)
+      Seq(0, 1, 100, 100000).foreach { size =>
+        val data = ByteString(words(size)).take(size)
+        sameBytes(ourDecode(BrotliCompressor.compress(data, parameters)), data)
+      }
+    }
+
+    "compress a strict body made of several pieces like a single piece" in {
+      val parameters = new Encoder.Parameters().setQuality(5)
+      val pieces = Vector("one ", "two ", "three").map(ByteString(_))
+      val rope = pieces.join
+      BrotliCompressor.compress(rope, parameters) should equal(BrotliCompressor.compress(ByteString.fromArray(rope.toArray), parameters))
+      BrotliCompressor.compress(rope.drop(2).take(8), parameters) should equal(
+        ByteString(Encoder.compress("e two th".getBytes("UTF-8"), parameters)))
+    }
+
+    "release the native encoder when the stream completes, fails or is cancelled" in {
+      // Observes close() from the thread of the stream without touching the encoder from the test thread
+      class ObservedCompressor(val underlying: BrotliCompressor) extends Compressor {
+        val closed = new CountDownLatch(1)
+        override def compress(input: ByteString): ByteString = underlying.compress(input)
+        override def flush(): ByteString = underlying.flush()
+        override def finish(): ByteString = underlying.finish()
+        override def compressAndFlush(input: ByteString): ByteString = underlying.compressAndFlush(input)
+        override def compressAndFinish(input: ByteString): ByteString = underlying.compressAndFinish(input)
+        override def close(): Unit = try underlying.close() finally closed.countDown()
+      }
+      def awaitReleased(compressor: ObservedCompressor): Unit = {
+        compressor.closed.await(5, TimeUnit.SECONDS) should be(true)
+        // close() has returned: the stream is done with the encoder
+        an[IllegalStateException] should be thrownBy compressor.underlying.flush()
+      }
+      def observed() = new ObservedCompressor(new BrotliCompressor(5))
+
+      val completed = observed()
+      Source.single(ByteString("data")).via(CompressionUtils.compressorFlow(() => completed)).join.awaitResult(5.seconds)
+      awaitReleased(completed)
+
+      val failed = observed()
+      Source(Vector(ByteString("data"))).concat(Source.failed(new RuntimeException("upstream failed")))
+        .via(CompressionUtils.compressorFlow(() => failed)).runWith(Sink.ignore).failed.awaitResult(5.seconds)
+      awaitReleased(failed)
+
+      val cancelled = observed()
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(CompressionUtils.compressorFlow(() => cancelled)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(ByteString("data"))
+      subscriber.expectNext(5.seconds)
+      subscriber.cancel()
+      awaitReleased(cancelled)
+    }
+
+    "reject a negative output limit instead of silently disabling it" in {
+      an[IllegalArgumentException] should be thrownBy new BrotliDecompressor(-1L)
+      an[IllegalArgumentException] should be thrownBy BrotliCompression.unbrotli(-1L)
+    }
+
+    "complete an empty stream without waiting for demand" in {
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.unbrotli()).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      publisher.sendComplete()
+      subscriber.expectSubscriptionAndComplete()
+    }
+
+    "complete right after the last output, without waiting for more demand" in {
+      val data = ByteString(words(2000))
+      val compressed = new BrotliCompressor(5).compressAndFinish(data)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.unbrotli()).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(compressed)
+      publisher.sendComplete()
+      subscriber.expectNext(5.seconds) should equal(data)
+      subscriber.expectComplete()
+    }
+
+    "complete right after the last output when the upstream completes later" in {
+      val data = ByteString(words(2000))
+      val compressed = new BrotliCompressor(5).compressAndFinish(data)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.unbrotli()).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(compressed)
+      subscriber.expectNext(5.seconds) should equal(data)
+      publisher.sendComplete()
+      subscriber.expectComplete()
     }
   }
 }
