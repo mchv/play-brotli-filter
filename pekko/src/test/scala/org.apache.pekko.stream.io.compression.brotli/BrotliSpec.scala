@@ -12,6 +12,7 @@ import com.aayushatharva.brotli4j.decoder.BrotliInputStream;
 import com.aayushatharva.brotli4j.encoder.Encoder
 import java.util.zip.ZipException
 
+import java.util.concurrent.{ CountDownLatch, TimeUnit }
 import java.util.concurrent.atomic.AtomicLong
 
 import scala.concurrent.duration._
@@ -265,30 +266,35 @@ class BrotliSpec extends CoderSpec("brotli") {
     }
 
     "release the native encoder when the stream completes, fails or is cancelled" in {
-      def released(compressor: BrotliCompressor): Boolean =
-        try {
-          compressor.flush() // fails before touching any native memory once the encoder is released
-          false
-        } catch { case _: IllegalStateException => true }
-      def awaitReleased(compressor: BrotliCompressor): Unit = {
-        val deadline = 5.seconds.fromNow
-        while (!released(compressor) && deadline.hasTimeLeft()) Thread.sleep(20)
-        released(compressor) should be(true)
+      // Observes close() from the thread of the stream without touching the encoder from the test thread
+      class ObservedCompressor(val underlying: BrotliCompressor) extends Compressor {
+        val closed = new CountDownLatch(1)
+        override def compress(input: ByteString): ByteString = underlying.compress(input)
+        override def flush(): ByteString = underlying.flush()
+        override def finish(): ByteString = underlying.finish()
+        override def compressAndFlush(input: ByteString): ByteString = underlying.compressAndFlush(input)
+        override def compressAndFinish(input: ByteString): ByteString = underlying.compressAndFinish(input)
+        override def close(): Unit = try underlying.close() finally closed.countDown()
       }
-      def flowOf(compressor: BrotliCompressor) = CompressionUtils.compressorFlow(() => compressor)
+      def awaitReleased(compressor: ObservedCompressor): Unit = {
+        compressor.closed.await(5, TimeUnit.SECONDS) should be(true)
+        // close() has returned: the stream is done with the encoder
+        an[IllegalStateException] should be thrownBy compressor.underlying.flush()
+      }
+      def observed() = new ObservedCompressor(new BrotliCompressor(5))
 
-      val completed = new BrotliCompressor(5)
-      Source.single(ByteString("data")).via(flowOf(completed)).join.awaitResult(5.seconds)
+      val completed = observed()
+      Source.single(ByteString("data")).via(CompressionUtils.compressorFlow(() => completed)).join.awaitResult(5.seconds)
       awaitReleased(completed)
 
-      val failed = new BrotliCompressor(5)
+      val failed = observed()
       Source(Vector(ByteString("data"))).concat(Source.failed(new RuntimeException("upstream failed")))
-        .via(flowOf(failed)).runWith(Sink.ignore).failed.awaitResult(5.seconds)
+        .via(CompressionUtils.compressorFlow(() => failed)).runWith(Sink.ignore).failed.awaitResult(5.seconds)
       awaitReleased(failed)
 
-      val cancelled = new BrotliCompressor(5)
+      val cancelled = observed()
       val (publisher, subscriber) =
-        TestSource.probe[ByteString].via(flowOf(cancelled)).toMat(TestSink.probe[ByteString])(Keep.both).run()
+        TestSource.probe[ByteString].via(CompressionUtils.compressorFlow(() => cancelled)).toMat(TestSink.probe[ByteString])(Keep.both).run()
       subscriber.request(1)
       publisher.sendNext(ByteString("data"))
       subscriber.expectNext(5.seconds)
