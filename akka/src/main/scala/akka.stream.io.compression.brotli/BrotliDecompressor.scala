@@ -34,10 +34,14 @@ object BrotliDecompressor {
  * exceed `maxOutputSize` bytes. Use the limit for untrusted input: brotli can expand a few kilobytes into
  * gigabytes. No data beyond the limit is emitted.
  *
- * @param maxOutputSize the maximum number of decoded bytes, or 0 for no limit
+ * @param maxOutputSize the maximum number of decoded bytes, or 0 for no limit. A negative value is rejected, so that
+ *                      a limit that is computed wrongly cannot silently disable the protection.
  */
 class BrotliDecompressor(maxOutputSize: Long = 0L) extends GraphStage[FlowShape[ByteString, ByteString]] {
   import BrotliDecompressor._
+
+  if (maxOutputSize < 0)
+    throw new IllegalArgumentException(s"The output limit must not be negative, but it is $maxOutputSize")
 
   private val in = Inlet[ByteString]("BrotliDecompressor.in")
   private val out = Outlet[ByteString]("BrotliDecompressor.out")
@@ -90,14 +94,22 @@ class BrotliDecompressor(maxOutputSize: Long = 0L) extends GraphStage[FlowShape[
       }
 
       override def onUpstreamFinish(): Unit =
-        // Some input may not have been decoded yet: the decoder is run when the downstream asks for data
-        if (isAvailable(out)) advance()
+        // Completion does not wait for demand when there is nothing left to emit: this releases the decoder
+        if (!started || (done && pending.isEmpty)) completeStage()
+        // Otherwise some input may not have been decoded yet: the decoder is run when the downstream asks for data
+        else if (isAvailable(out)) advance()
 
       /** Emits decoded data, or asks for more input, or completes. Only called when the downstream is waiting. */
       private def advance(): Unit = {
         val chunk = decode()
-        if (chunk.nonEmpty) push(out, chunk)
-        else if (done) {
+        if (chunk.nonEmpty) {
+          push(out, chunk)
+          // The last output has been taken: do not wait for another demand to find out
+          if (done && pending.isEmpty) {
+            if (isClosed(in)) completeStage()
+            else if (!hasBeenPulled(in)) pull(in) // there should be nothing else: fail if there is
+          }
+        } else if (done) {
           if (pending.nonEmpty) failStage(unexpectedData())
           else if (isClosed(in)) completeStage()
           else if (!hasBeenPulled(in)) pull(in) // there should be nothing else: fail if there is
@@ -149,6 +161,7 @@ class BrotliDecompressor(maxOutputSize: Long = 0L) extends GraphStage[FlowShape[
 
       private def pullOutput(): ByteString = {
         val buffer = decoder.pull()
+        if (decoder.getStatus == DecoderJNI.Status.DONE) done = true
         val size = buffer.remaining()
         produced += size
         if (maxOutputSize > 0 && produced > maxOutputSize)

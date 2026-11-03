@@ -295,5 +295,41 @@ class BrotliSpec extends CoderSpec("brotli") {
       subscriber.cancel()
       awaitReleased(cancelled)
     }
+
+    "reject a negative output limit instead of silently disabling it" in {
+      an[IllegalArgumentException] should be thrownBy new BrotliDecompressor(-1L)
+      an[IllegalArgumentException] should be thrownBy BrotliCompression.unbrotli(-1L)
+    }
+
+    "complete an empty stream without waiting for demand" in {
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.unbrotli()).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      publisher.sendComplete()
+      subscriber.expectSubscriptionAndComplete()
+    }
+
+    "complete right after the last output, without waiting for more demand" in {
+      val data = ByteString(words(2000))
+      val compressed = new BrotliCompressor(5).compressAndFinish(data)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.unbrotli()).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(compressed)
+      publisher.sendComplete()
+      subscriber.expectNext(5.seconds).toArray should equal(data.toArray)
+      subscriber.expectComplete()
+    }
+
+    "complete right after the last output when the upstream completes later" in {
+      val data = ByteString(words(2000))
+      val compressed = new BrotliCompressor(5).compressAndFinish(data)
+      val (publisher, subscriber) =
+        TestSource.probe[ByteString].via(BrotliCompression.unbrotli()).toMat(TestSink.probe[ByteString])(Keep.both).run()
+      subscriber.request(1)
+      publisher.sendNext(compressed)
+      subscriber.expectNext(5.seconds).toArray should equal(data.toArray)
+      publisher.sendComplete()
+      subscriber.expectComplete()
+    }
   }
 }
