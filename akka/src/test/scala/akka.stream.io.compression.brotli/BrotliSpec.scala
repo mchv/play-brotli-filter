@@ -31,6 +31,12 @@ class BrotliSpec extends CoderSpec("brotli") {
     Brotli4jLoader.ensureAvailability();
   }
 
+  /**
+   * Compares the bytes of two ByteStrings. `ByteString.equals` looks every element up in the pieces of a rope, which takes
+   * minutes for a few megabytes on Scala 2.12: use this for anything larger than a piece of the decoder (64 KiB).
+   */
+  private def sameBytes(actual: ByteString, expected: ByteString) = actual.toArray should equal(expected.toArray)
+
   private def wordsText: String = words(8000)
 
   private def words(count: Int): String = {
@@ -77,13 +83,13 @@ class BrotliSpec extends CoderSpec("brotli") {
       val fast = new BrotliCompressor(new Encoder.Parameters().setQuality(0)).compressAndFinish(data)
       val best = new BrotliCompressor(new Encoder.Parameters().setQuality(11)).compressAndFinish(data)
       best.length should be < fast.length
-      ourDecode(fast).toArray should equal(data.toArray)
-      ourDecode(best).toArray should equal(data.toArray)
+      ourDecode(fast) should equal(data)
+      ourDecode(best) should equal(data)
     }
 
     "use the encoder default for a quality of -1" in {
       val data = ByteString(wordsText, "UTF8")
-      new BrotliCompressor(-1).compressAndFinish(data).toArray should equal(new BrotliCompressor(11).compressAndFinish(data).toArray)
+      new BrotliCompressor(-1).compressAndFinish(data) should equal(new BrotliCompressor(11).compressAndFinish(data))
     }
 
     "honor the window of the encoder parameters" in {
@@ -92,21 +98,21 @@ class BrotliSpec extends CoderSpec("brotli") {
       val small = new BrotliCompressor(new Encoder.Parameters().setQuality(5).setWindow(10)).compressAndFinish(data)
       val large = new BrotliCompressor(new Encoder.Parameters().setQuality(5).setWindow(16)).compressAndFinish(data)
       small.length should be > (large.length * 3 / 2)
-      ourDecode(small).toArray should equal(data.toArray)
-      ourDecode(large).toArray should equal(data.toArray)
+      ourDecode(small) should equal(data)
+      ourDecode(large) should equal(data)
     }
 
     "compress with every encoder mode" in {
       Encoder.Mode.values().foreach { mode =>
         val compressed = new BrotliCompressor(new Encoder.Parameters().setQuality(5).setMode(mode)).compressAndFinish(largeTextBytes)
-        ourDecode(compressed).toArray should equal(largeTextBytes.toArray)
+        ourDecode(compressed) should equal(largeTextBytes)
       }
     }
 
     "create the compression flow from encoder parameters" in {
       val parameters = new Encoder.Parameters().setQuality(3).setWindow(12).setMode(Encoder.Mode.TEXT)
       val compressed = Source.single(largeTextBytes).via(BrotliCompression.brotli(parameters)).join.awaitResult(3.seconds)
-      ourDecode(compressed).toArray should equal(largeTextBytes.toArray)
+      ourDecode(compressed) should equal(largeTextBytes)
     }
 
     "decode a stream that arrives one byte at a time without redecoding what it has already decoded" in {
@@ -115,7 +121,7 @@ class BrotliSpec extends CoderSpec("brotli") {
       val pieces = compressed.grouped(1).toVector
       pieces.length should be > 10000
       val decoded = Source(pieces).via(BrotliCompression.unbrotli()).join.awaitResult(10.seconds)
-      decoded.toArray should equal(data.toArray)
+      sameBytes(decoded, data)
     }
 
     "emit the decoded data before the whole stream has arrived" in {
@@ -132,7 +138,7 @@ class BrotliSpec extends CoderSpec("brotli") {
       publisher.sendComplete()
       subscriber.request(Long.MaxValue)
       val rest = subscriber.receiveWithin(5.seconds)
-      (first ++ rest.join).toArray should equal(data.toArray)
+      sameBytes(first ++ rest.join, data)
     }
 
     "emit the decoded data in chunks of a bounded size" in {
@@ -162,7 +168,7 @@ class BrotliSpec extends CoderSpec("brotli") {
       val data = ByteString(new Array[Byte](1024 * 1024))
       val compressed = new BrotliCompressor(1).compressAndFinish(data)
       val decoded = Source.single(compressed).via(BrotliCompression.unbrotli(data.length.toLong)).join.awaitResult(10.seconds)
-      decoded.toArray should equal(data.toArray)
+      sameBytes(decoded, data)
     }
 
     "not limit the output by default, and detect the end of an output that is a multiple of the window" in {
@@ -203,7 +209,7 @@ class BrotliSpec extends CoderSpec("brotli") {
       decoderIn.sendNext(first)
       var decoded = ByteString.empty
       while (decoded.length < chunk.length) decoded ++= decoderOut.expectNext(5.seconds)
-      decoded.toArray should equal(chunk.toArray)
+      sameBytes(decoded, chunk)
       decoderIn.sendError(new RuntimeException("done"))
       decoderOut.expectError()
       publisher.sendComplete()
@@ -217,7 +223,7 @@ class BrotliSpec extends CoderSpec("brotli") {
       val outputs = pieces.map(compressor.compressAndFlush)
       outputs.foreach(_ should not be empty)
       val all = outputs.join ++ compressor.finish()
-      ourDecode(all).toArray should equal(pieces.join.toArray)
+      ourDecode(all) should equal(pieces.join)
     }
 
     "compress input larger than the input buffer of the encoder" in {
@@ -225,7 +231,7 @@ class BrotliSpec extends CoderSpec("brotli") {
       data.length should be > 1024 * 1024
       val compressor = new BrotliCompressor(5)
       val compressed = compressor.compress(data) ++ compressor.finish()
-      ourDecode(compressed).toArray should equal(data.toArray)
+      sameBytes(ourDecode(compressed), data)
     }
 
     "refuse input after it is closed or finished, instead of writing to the memory of a released encoder" in {
@@ -252,7 +258,7 @@ class BrotliSpec extends CoderSpec("brotli") {
       val parameters = new Encoder.Parameters().setQuality(5)
       Seq(0, 1, 100, 100000).foreach { size =>
         val data = ByteString(words(size)).take(size)
-        ourDecode(BrotliCompressor.compress(data, parameters)).toArray should equal(data.toArray)
+        sameBytes(ourDecode(BrotliCompressor.compress(data, parameters)), data)
       }
     }
 
@@ -322,7 +328,7 @@ class BrotliSpec extends CoderSpec("brotli") {
       subscriber.request(1)
       publisher.sendNext(compressed)
       publisher.sendComplete()
-      subscriber.expectNext(5.seconds).toArray should equal(data.toArray)
+      subscriber.expectNext(5.seconds) should equal(data)
       subscriber.expectComplete()
     }
 
@@ -333,7 +339,7 @@ class BrotliSpec extends CoderSpec("brotli") {
         TestSource.probe[ByteString].via(BrotliCompression.unbrotli()).toMat(TestSink.probe[ByteString])(Keep.both).run()
       subscriber.request(1)
       publisher.sendNext(compressed)
-      subscriber.expectNext(5.seconds).toArray should equal(data.toArray)
+      subscriber.expectNext(5.seconds) should equal(data)
       publisher.sendComplete()
       subscriber.expectComplete()
     }
