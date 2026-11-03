@@ -3,7 +3,13 @@
 # Usage: bench/load-summary.sh <log>
 set -euo pipefail
 
-grep -E '^RESULT' "${1:?usage: load-summary.sh <log>}" | sed -E 's/ +/ /g; s/= /=/g; s/us//g; s/KB//g; s/ms\/s//g' | awk '
+log="${1:?usage: load-summary.sh <log>}"
+if grep -q '^FAILURES' "$log"; then
+	echo "THE LOAD TEST REPORTED FAILURES:" >&2
+	grep '^FAILURES' "$log" >&2
+fi
+
+grep -E '^RESULT' "$log" | sed -E 's/ +/ /g; s/= /=/g; s/us//g; s/KB//g; s/ms\/s//g' | awk '
 	function median(name, key,   n, i, j, t, a) {
 		n = count[key]
 		for (i = 1; i <= n; i++) a[i] = values[name, key, i]

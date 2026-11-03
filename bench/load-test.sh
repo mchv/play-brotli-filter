@@ -30,4 +30,4 @@ for ((serie = 1; serie <= series; serie++)); do
 done
 
 sbt --server --no-server -batch "${commands[@]}" 2>&1 |
-	sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | { grep -E '^RESULT|\[error\]' || [ $? -eq 1 ]; }
+	sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | { grep -E '^RESULT|^FAILURES|\[error\]' || [ $? -eq 1 ]; }

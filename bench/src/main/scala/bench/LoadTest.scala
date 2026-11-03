@@ -5,7 +5,10 @@ import java.lang.management.ManagementFactory
 import java.net.URI
 import java.net.http.{ HttpClient, HttpRequest, HttpResponse }
 import java.util.zip.GZIPInputStream
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.{ CountDownLatch }
+import java.util.concurrent.atomic.{ AtomicLong, AtomicReference }
+
+import scala.util.control.NonFatal
 
 import scala.concurrent.duration._
 
@@ -93,7 +96,11 @@ object LoadTest {
     val client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
     val request = HttpRequest.newBuilder(new URI(s"http://127.0.0.1:$port/$endpoint")).header("Accept-Encoding", encoding).build()
 
-    def decode(body: Array[Byte]): Array[Byte] = {
+    // With LOADTEST_CORRUPT set, the first byte of every body that is verified is flipped, to check that the failures are reported
+    val corrupt = sys.env.contains("LOADTEST_CORRUPT")
+
+    def decode(received: Array[Byte]): Array[Byte] = {
+      val body = if (corrupt) received.updated(0, (received(0) ^ 0xff).toByte) else received
       val in = if (gzip) new GZIPInputStream(new ByteArrayInputStream(body)) else new BrotliInputStream(new ByteArrayInputStream(body))
       try in.readAllBytes()
       finally in.close()
@@ -103,6 +110,7 @@ object LoadTest {
     val measureFrom = start + warmUp.toNanos
     val end = measureFrom + duration.toNanos
     val failures = new AtomicLong
+    val firstError = new AtomicReference[String]
     val bytes = new AtomicLong
     val latencies = Array.fill(connections)(new Array[Long](2000000))
     val counts = new Array[Int](connections)
@@ -110,47 +118,67 @@ object LoadTest {
     val os = ManagementFactory.getOperatingSystemMXBean.asInstanceOf[com.sun.management.OperatingSystemMXBean]
     val threads = ManagementFactory.getThreadMXBean.asInstanceOf[com.sun.management.ThreadMXBean]
     val gcs = ManagementFactory.getGarbageCollectorMXBeans
+    // The counters of a thread that has ended are gone: the workers wait for the last snapshot before they end
     def allocated(): Long = threads.getThreadAllocatedBytes(threads.getAllThreadIds).filter(_ > 0).sum
     def gcMillis(): Long = { var total = 0L; gcs.forEach(gc => total += gc.getCollectionTime); total }
-    var cpu0, alloc0, gc0 = 0L
+
+    val stopped = new CountDownLatch(connections)
+    val release = new CountDownLatch(1)
+
+    def failed(error: String): Unit = {
+      failures.incrementAndGet()
+      firstError.compareAndSet(null, error)
+    }
 
     val workers = (0 until connections).map { i =>
       val thread = new Thread(() => {
         var n = 0
-        var verified = 0
         while (System.nanoTime() < end) {
           val sent = System.nanoTime()
-          val response = client.send(request, HttpResponse.BodyHandlers.ofByteArray())
-          val took = System.nanoTime() - sent
-          val ok = response.statusCode == 200 && response.headers.firstValue("Content-Encoding").orElse("") == encoding
-          if (!ok) failures.incrementAndGet()
-          n += 1
-          if (n % verifyEvery == 0 && !java.util.Arrays.equals(decode(response.body), expected)) failures.incrementAndGet()
-          if (sent >= measureFrom) {
-            if (counts(i) < latencies(i).length) { latencies(i)(counts(i)) = took; counts(i) += 1 }
-            bytes.addAndGet(response.body.length.toLong)
+          try {
+            val response = client.send(request, HttpResponse.BodyHandlers.ofByteArray())
+            val took = System.nanoTime() - sent
+            val status = response.statusCode
+            val contentEncoding = response.headers.firstValue("Content-Encoding").orElse("")
+            if (status != 200 || contentEncoding != encoding) failed(s"status $status, content encoding '$contentEncoding'")
+            n += 1
+            if (n % verifyEvery == 0 && !java.util.Arrays.equals(decode(response.body), expected)) failed("the decoded body differs")
+            if (sent >= measureFrom) {
+              if (counts(i) < latencies(i).length) { latencies(i)(counts(i)) = took; counts(i) += 1 }
+              bytes.addAndGet(response.body.length.toLong)
+            }
+          } catch {
+            // A connection that fails, or a body that does not decode, is a failure, not the end of the worker
+            case NonFatal(e) =>
+              failed(e.toString)
+              Thread.sleep(10)
           }
         }
+        stopped.countDown()
+        release.await()
       })
       thread.start()
       thread
     }
 
-    Thread.sleep(warmUp.toMillis)
-    cpu0 = os.getProcessCpuTime; alloc0 = allocated(); gc0 = gcMillis()
-    Thread.sleep(duration.toMillis)
-    val cpu1 = os.getProcessCpuTime; val alloc1 = allocated(); val gc1 = gcMillis()
+    Thread.sleep(math.max(0L, (measureFrom - System.nanoTime()) / 1000000))
+    val time0 = System.nanoTime(); val cpu0 = os.getProcessCpuTime; val alloc0 = allocated(); val gc0 = gcMillis()
+    stopped.await()
+    val time1 = System.nanoTime(); val cpu1 = os.getProcessCpuTime; val alloc1 = allocated(); val gc1 = gcMillis()
+    release.countDown()
     workers.foreach(_.join())
     server.stop()
 
+    val seconds = (time1 - time0) / 1e9
     val all = (0 until connections).flatMap(i => latencies(i).take(counts(i))).sorted
     val requests = all.size.toLong
     def percentile(p: Double): Double = all((all.size * p).toInt.min(all.size - 1)) / 1000.0
     println(
       f"RESULT filter=$filterName%-4s endpoint=$endpoint%-8s connections=$connections%-3d requests=$requests%-7d " +
-        f"rps=${requests / duration.toSeconds.toDouble}%8.0f p50=${percentile(0.5)}%8.0fus p95=${percentile(0.95)}%8.0fus p99=${percentile(0.99)}%8.0fus " +
+        f"rps=${requests / seconds}%8.0f p50=${percentile(0.5)}%8.0fus p95=${percentile(0.95)}%8.0fus p99=${percentile(0.99)}%8.0fus " +
         f"bytes/resp=${bytes.get / requests}%7d cpu/req=${(cpu1 - cpu0) / 1000.0 / requests}%7.0fus " +
-        f"alloc/req=${(alloc1 - alloc0) / 1024.0 / requests}%7.0fKB gc=${(gc1 - gc0) / duration.toSeconds.toDouble}%5.0fms/s failures=${failures.get}")
+        f"alloc/req=${(alloc1 - alloc0) / 1024.0 / requests}%7.0fKB gc=${(gc1 - gc0) / seconds}%5.0fms/s failures=${failures.get}")
+    if (failures.get > 0) println(s"FAILURES ${failures.get} filter=$filterName endpoint=$endpoint first error: ${firstError.get}")
     // The exit status stays 0: a failing command would stop the commands that follow it in the same sbt run
     sys.exit(0)
   }
