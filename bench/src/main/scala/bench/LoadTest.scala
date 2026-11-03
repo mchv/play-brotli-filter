@@ -27,7 +27,10 @@ import play.filters.gzip.{ GzipFilter, GzipFilterConfig }
  * real connections. It reports the throughput, the latency, and the CPU, the garbage collection and the allocation per
  * request, and it checks that the compressed responses decode to the right body.
  *
- * Usage: `LoadTest <gzip|br> <small|large|streamed|chunked|tiny> <connections> <warm-up seconds> <seconds> <verify every n>`
+ * Usage: `LoadTest <gzip|br|brN> <small|large|streamed|chunked|tiny> <connections> <warm-up seconds> <seconds> <verify every n>`
+ *
+ * `brN` is the brotli filter with a flush interval of N milliseconds (`br0` flushes after every chunk, like the gzip
+ * filter); `br` is the brotli filter with its default configuration.
  *
  * The server and the clients share the JVM, hence the CPU: compare filters with the same arguments, not with other
  * machines. The CPU per request includes the clients, which do the same work for each filter apart from decoding the
@@ -59,7 +62,10 @@ object LoadTest {
 
       override lazy val httpFilters: Seq[EssentialFilter] = Seq(filterName match {
         case "gzip" => new GzipFilter(GzipFilterConfig.fromConfiguration(configuration))(materializer)
-        case "br"   => new BrotliFilter(BrotliFilterConfig.fromConfiguration(configuration))(materializer)
+        case "br" => new BrotliFilter(BrotliFilterConfig.fromConfiguration(configuration))(materializer)
+        case brotli if brotli.startsWith("br") =>
+          new BrotliFilter(
+            BrotliFilterConfig.fromConfiguration(configuration).withFlushInterval(brotli.drop(2).toInt.millis))(materializer)
       })
 
       override lazy val router: Router = Router.from {
@@ -82,12 +88,13 @@ object LoadTest {
     val port = server.httpPort.get
 
     val expected = if (endpoint == "small") css.take(4096) else css
-    val encoding = if (filterName == "gzip") "gzip" else "br"
+    val gzip = filterName == "gzip"
+    val encoding = if (gzip) "gzip" else "br"
     val client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
     val request = HttpRequest.newBuilder(new URI(s"http://127.0.0.1:$port/$endpoint")).header("Accept-Encoding", encoding).build()
 
     def decode(body: Array[Byte]): Array[Byte] = {
-      val in = if (filterName == "gzip") new GZIPInputStream(new ByteArrayInputStream(body)) else new BrotliInputStream(new ByteArrayInputStream(body))
+      val in = if (gzip) new GZIPInputStream(new ByteArrayInputStream(body)) else new BrotliInputStream(new ByteArrayInputStream(body))
       try in.readAllBytes()
       finally in.close()
     }

@@ -75,6 +75,12 @@ play.filters {
       blackList = []
     }
 
+    # The longest time that the compressed data of a streamed or chunked response waits in the encoder before it is sent.
+    # The encoder is flushed only when its oldest data has waited that long, and at the end of the response. Flushing after
+    # every chunk, as the gzip filter does, ends a block each time and costs compressed size and CPU when the chunks are
+    # small: chunks of 8 KB cost 2% of the size, chunks of 1 KB 16%, chunks of 256 bytes 56%. 0 flushes after every chunk.
+    flushInterval = 5 ms
+
     # The byte threshold for the response body size which controls if a response should be compressed (e.g. 1k).
     # Responses of this size or smaller are not compressed. If the body size cannot be determined, then it is assumed
     # to be over the threshold.
@@ -96,15 +102,15 @@ play.filters.brotli {
 * **Quality:** the default is `5`, because the highest quality, `11`, is much slower and is rarely worth it when compressing responses on the fly. Set it to `11` or `-1` for the smallest output, for example when the responses are cached.
 * **Content types:** an entry is a media type such as `text/html`, `text/*` or `*/*`. The matching ignores the case and the parameters (`; charset=utf-8`) of the response content type. With a white list, a response without a content type is not compressed. With only a black list, it is.
 * **Invalid values:** the application fails to start with a message that names the setting, for example when the quality is above 11 or an entry of a content type list is not a media type.
-* **Code:** `BrotliFilterConfig` has the same settings (`withQuality`, `withWindow`, `withMode`, `withBufferSize`, `withChunkedThreshold`, `withThreshold` and `withShouldBrotli`) for filters that are not created from the configuration.
+* **Code:** `BrotliFilterConfig` has the same settings (`withQuality`, `withWindow`, `withMode`, `withBufferSize`, `withChunkedThreshold`, `withThreshold`, `withFlushInterval` and `withShouldBrotli`) for filters that are not created from the configuration.
 
 ## Streaming
 
-The Play filter compresses a response as it is produced: a streamed or chunked response is not held in memory until it ends, and its first compressed bytes are sent when its first chunk is available. Only a strict body, or a streamed body that is no larger than `chunkedThreshold`, is compressed in one call.
+The Play filter compresses a response as it is produced: a streamed or chunked response is not held in memory until it ends, and its compressed bytes are sent at the latest `flushInterval` (5 ms by default) after the chunk that they come from is available. Chunks that arrive within the interval share a block, so the size of the output is the size of the output of a single call, whatever the size of the chunks. Only a strict body, or a streamed body that is no larger than `chunkedThreshold`, is compressed in one call.
 
 The Akka and Pekko modules, which the filter is built on, are incremental as well:
 
-* `BrotliCompression.brotli(level)` compresses a stream. `BrotliCompression.brotli(parameters)` takes a brotli4j `Encoder.Parameters` to also set the window and the mode. Like the gzip flow, they flush after every element, so that every element that comes out can be decoded as it arrives. Flushing costs compression ratio when the elements are small. For a 140 KB css file at quality 5, compared with compressing it in one call, elements of 16 KB cost 1%, elements of 8 KB cost 2%, elements of 1 KB cost 16% and elements of 256 bytes cost 56%. If the ratio matters more than the latency, batch the small elements before the flow.
+* `BrotliCompression.brotli(level)` compresses a stream. `BrotliCompression.brotli(parameters)` takes a brotli4j `Encoder.Parameters` to also set the window and the mode. Like the gzip flow, they flush after every element, so that every element that comes out can be decoded as it arrives. Flushing costs compression ratio when the elements are small. `BrotliCompression.brotli(parameters, maxFlushDelay)` flushes only at the end of the stream and when the oldest data that the encoder holds has waited for `maxFlushDelay`; this is the flow of the Play filter. For a 140 KB css file at quality 5, compared with compressing it in one call, elements of 16 KB cost 1%, elements of 8 KB cost 2%, elements of 1 KB cost 16% and elements of 256 bytes cost 56%.
 * `BrotliCompression.unbrotli()` decompresses a stream and emits the decoded data as it is produced, in pieces of at most 64 KiB, whatever the size of the pieces it receives. For input that you do not trust, use `BrotliCompression.unbrotli(maxOutputSize)`: brotli can expand a few kilobytes into gigabytes. The stream fails as soon as the output would exceed the limit, and nothing beyond the limit is emitted. The stream also fails when the input is truncated, corrupt, or followed by other data.
 * `BrotliCompressor.compress(data, parameters)` compresses a body that is already in memory in one call.
 
