@@ -28,7 +28,7 @@ on:
         default: "gzip,br"
       head_filters:
         description: "Load test filters of the head"
-        default: "gzip,brq5,br"
+        default: "gzip,brq4,br"
       series:
         description: "Load test series per commit, alternating between the two commits"
         default: "3"
@@ -42,7 +42,7 @@ env:
   BASE_CODECS: ${{ inputs.base_codecs || 'none,gzip,br4,br5' }}
   HEAD_CODECS: ${{ inputs.head_codecs || 'none,gzip,br4,br5,br' }}
   BASE_FILTERS: ${{ inputs.base_filters || 'gzip,br' }}
-  HEAD_FILTERS: ${{ inputs.head_filters || 'gzip,brq5,br' }}
+  HEAD_FILTERS: ${{ inputs.head_filters || 'gzip,brq4,br' }}
   SERIES: ${{ inputs.series || '3' }}
   SECONDS_MEASURED: ${{ inputs.seconds || '6' }}
 

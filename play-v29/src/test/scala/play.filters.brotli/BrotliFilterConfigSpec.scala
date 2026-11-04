@@ -51,7 +51,7 @@ class BrotliFilterConfigSpec extends Specification {
     "match the documented defaults" in {
       val config = configured()
       config.quality must_== 5
-      config.streamQuality must_== 4
+      config.streamQuality must_== 5
       config.window must_== -1
       config.mode must_== Encoder.Mode.GENERIC
       config.bufferSize must_== 0

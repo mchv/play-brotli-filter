@@ -25,7 +25,7 @@ import play.filters.gzip.{ GzipFilter, GzipFilterConfig }
  * `codec`: `none` is the brotli filter for a request that does not accept brotli, so the response is not compressed:
  * the cost of the filter and of the benchmark, which the other codecs include. `gzip` is Play's default level (-1, which
  * is 6), `gzip9` its best level, `br4` and `br5` are brotli qualities 4 and 5 for every response, and `br` is the default
- * configuration of the brotli filter (quality 5, stream quality 4).
+ * configuration of the brotli filter (quality 5, stream quality 5).
  *
  * `body`: `strict` is a whole body in memory; `streamed` is a body of known length that is above the chunked
  * threshold, so it is compressed as a stream; `chunked` is the same body as a chunked response; `chunkedTiny` is

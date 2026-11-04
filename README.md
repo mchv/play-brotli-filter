@@ -53,8 +53,9 @@ play.filters {
 
     # The quality of streamed and chunked responses, which are compressed as they are produced: the same range as
     # `quality`. Compressing a stream costs more CPU than compressing a body in one call, and a lower quality gives some of
-    # it back for a slightly larger output; at quality 4 the stream of a 140 KB css file is 4% larger than at quality 5.
-    streamQuality = 4
+    # it back for a larger output: at quality 4 the stream of a 140 KB css file costs about 20% less CPU than at quality 5
+    # and is 17% larger (22 060 against 18 857 bytes), which is larger than gzip at its default level (21 046 bytes).
+    streamQuality = 5
 
     # The log2 of the sliding window size, from 10 (1 KiB) to 24 (16 MiB). A larger window can find more repetitions in
     # large responses but needs more memory, also in the browser. -1 fits the window to the size of a body that is
@@ -110,7 +111,7 @@ play.filters.brotli {
 }
 ```
 
-* **Quality:** the default is `5`, because the highest quality, `11`, is much slower and is rarely worth it when compressing responses on the fly. Set it to `11` or `-1` for the smallest output, for example when the responses are cached. Streamed and chunked responses use `streamQuality`, `4` by default: they cost more CPU than a body compressed in one call, and the lower quality gives some of it back for an output a few percent larger.
+* **Quality:** the default is `5`, because the highest quality, `11`, is much slower and is rarely worth it when compressing responses on the fly. Set it to `11` or `-1` for the smallest output, for example when the responses are cached. Streamed and chunked responses use `streamQuality`, also `5` by default: they cost more CPU than a body compressed in one call, and a lower quality gives some of it back for a larger output. At `4` the stream of a 140 KB css file costs about 20% less CPU and is 17% larger, which is larger than gzip at its default level.
 * **Content types:** an entry is a media type such as `text/html`, `text/*` or `*/*`. The matching ignores the case and the parameters (`; charset=utf-8`) of the response content type. With a white list, a response without a content type is not compressed. With only a black list, it is.
 * **Invalid values:** the application fails to start with a message that names the setting, for example when the quality is above 11 or an entry of a content type list is not a media type.
 * **Code:** `BrotliFilterConfig` has the same settings (`withQuality`, `withStreamQuality`, `withWindow`, `withMode`, `withBufferSize`, `withChunkedThreshold`, `withThreshold`, `withFlushInterval` and `withShouldBrotli`) for filters that are not created from the configuration.

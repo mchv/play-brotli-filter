@@ -75,7 +75,7 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
     window: Int = -1,
     mode: Encoder.Mode = Encoder.Mode.GENERIC,
     flushInterval: FiniteDuration = 5.millis,
-    streamQuality: Int = 4)(implicit mat: Materializer) = {
+    streamQuality: Int = 5)(implicit mat: Materializer) = {
       this(BrotliFilterConfig(quality, bufferSize, chunkedThreshold, shouldBrotli, threshold, window, mode, flushInterval, streamQuality))
     }
 
@@ -239,7 +239,8 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
  *                      small. Zero flushes after every chunk. The scheduler rounds it up to its tick (10 ms by default).
  * @param streamQuality The quality of streamed and chunked responses, which are compressed as they are produced. Range is
  *                      0 to 11, or -1 for the default of the brotli encoder (11). A streamed response costs more CPU than a
- *                      body compressed in one call, and a quality below `quality` gives some of it back.
+ *                      body compressed in one call, and a quality below `quality` gives some of it back for a
+ *                      larger output.
  */
 case class BrotliFilterConfig(quality: Int = 5,
     bufferSize: Int = 0,
@@ -249,7 +250,7 @@ case class BrotliFilterConfig(quality: Int = 5,
     window: Int = -1,
     mode: Encoder.Mode = Encoder.Mode.GENERIC,
     flushInterval: FiniteDuration = 5.millis,
-    streamQuality: Int = 4) {
+    streamQuality: Int = 5) {
 
   if (quality < -1 || quality > 11) {
     throw new IllegalArgumentException(
