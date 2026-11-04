@@ -106,17 +106,17 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
             result.copy(header = header, body = compressStrictEntity(data, contentType))
           }
 
-        case HttpEntity.Streamed(data, _, contentType) if request.version == HttpProtocol.HTTP_1_0 =>
+        case HttpEntity.Streamed(data, contentLength, contentType) if request.version == HttpProtocol.HTTP_1_0 =>
           // It's above the chunked threshold, but we can't chunk it because we're using HTTP 1.0.
           // Instead, we use a close delimited body (ie, regular body with no content length)
-          val compressed = data.via(createBrotliFlow)
+          val compressed = data.via(flowFor(contentLength))
           Future.successful(
             result.copy(header = header, body = HttpEntity.Streamed(compressed, None, contentType))
           )
 
-        case HttpEntity.Streamed(data, _, contentType) =>
+        case HttpEntity.Streamed(data, contentLength, contentType) =>
           // It's above the chunked threshold, compress through the brotli flow, and send as chunked
-          val compressed = data.via(createBrotliFlow).map(d => HttpChunk.Chunk(d))
+          val compressed = data.via(flowFor(contentLength)).map(d => HttpChunk.Chunk(d))
           Future.successful(result.copy(header = header, body = HttpEntity.Chunked(compressed, contentType)))
 
         case HttpEntity.Chunked(chunks, contentType) =>
@@ -139,7 +139,7 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
             // Broadcast the stream through two separate flows, one that collects chunks and turns them into
             // ByteStrings, sends them through the Brotli flow as they come, and then turns them back into chunks,
             // the other that just allows the last chunk through. Then concat those two flows together.
-            broadcast.out(0) ~> extractChunks ~> createBrotliFlow ~> createChunks ~> concat.in(0)
+            broadcast.out(0) ~> extractChunks ~> defaultFlow ~> createChunks ~> concat.in(0)
             broadcast.out(1) ~> filterLastChunk ~> concat.in(1)
 
             new FlowShape(broadcast.in, concat.out)
@@ -152,11 +152,37 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
   }
 
 
-  private def createBrotliFlow: Flow[ByteString, ByteString, _] =
+  /*
+   * The flows are blueprints: nothing in them is shared between the responses but the (read only) parameters, because
+   * the encoder is created when a flow is materialized. Build them once, not for every response.
+   */
+  private val defaultFlow: Flow[ByteString, ByteString, _] =
     BrotliFlow.brotli(config.bufferSize, config.encoderParameters, config.flushInterval)
 
+  /**
+   * With the default window the encoder sets up 2 to the power of (window + 1) bytes of ring buffer once it has a block of
+   * input, which is 8 MiB with the window of 4 MiB: a body of known length needs a window that fits it, and no more.
+   * One flow per window, built once.
+   */
+  private val flowsByWindow: Vector[Flow[ByteString, ByteString, _]] =
+    if (config.window != -1) Vector.empty
+    else
+      (10 to 24).toVector.map { window =>
+        val parameters = new Encoder.Parameters().setQuality(config.quality).setMode(config.mode).setWindow(window)
+        BrotliFlow.brotli(config.bufferSize, parameters, config.flushInterval)
+      }
+
+  private def flowFor(contentLength: Option[Long]): Flow[ByteString, ByteString, _] =
+    contentLength match {
+      case Some(length) if flowsByWindow.nonEmpty =>
+        flowsByWindow(BrotliCompressor.windowFor(math.min(length, Int.MaxValue.toLong).toInt) - 10)
+      case _ => defaultFlow
+    }
+
+  private val strictParameters: Encoder.Parameters = config.encoderParameters // only read
+
   private def compressStrictEntity(data: ByteString, contentType: Option[String]) =
-    HttpEntity.Strict(BrotliCompressor.compress(data, config.encoderParameters), contentType)
+    HttpEntity.Strict(BrotliCompressor.compress(data, strictParameters), contentType)
 
   /**
    * Whether this request may be compressed.

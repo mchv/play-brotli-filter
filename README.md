@@ -53,8 +53,9 @@ play.filters {
 
     # The log2 of the sliding window size, from 10 (1 KiB) to 24 (16 MiB). A larger window can find more repetitions in
     # large responses but needs more memory, also in the browser. -1 fits the window to the size of a body that is
-    # compressed in one call (a small body does not need a large window, and setting one up costs more than compressing it),
-    # and uses the default of the brotli encoder, 4 MiB, for streamed and chunked responses.
+    # compressed in one call, or whose length is known (a streamed response that has a content length): a small body does not
+    # need a large window, and setting one up costs more than compressing it. It uses the default of the brotli encoder, 4 MiB,
+    # when the length is not known, as for a chunked response.
     window = -1
 
     # The kind of content the encoder is tuned for: "generic", "text" (UTF-8 text) or "font" (WOFF 2.0 fonts).
@@ -77,10 +78,14 @@ play.filters {
       blackList = []
     }
 
-    # The longest time that the compressed data of a streamed or chunked response waits in the encoder before it is sent.
-    # The encoder is flushed only when its oldest data has waited that long, and at the end of the response. Flushing after
+    # How long the data of a streamed or chunked response may wait in the encoder before it is flushed: a target, not a
+    # deadline (see the resolution below), and the flushed data is sent when the downstream asks for it. The encoder is
+    # flushed only when its oldest data has waited that long, and at the end of the response. Flushing after
     # every chunk, as the gzip filter does, ends a block each time and costs compressed size and CPU when the chunks are
     # small: chunks of 8 KB cost 2% of the size, chunks of 1 KB 16%, chunks of 256 bytes 56%. 0 flushes after every chunk.
+    # The timer is the one of the scheduler of the actor system, which ticks every 10 ms by default (pekko.scheduler.tick-duration,
+    # akka.scheduler.tick-duration for Play 2.8 and 2.9): the data is flushed up to one tick after the interval, so an interval
+    # below the tick does not make it faster.
     flushInterval = 5 ms
 
     # The byte threshold for the response body size which controls if a response should be compressed (e.g. 1k).
@@ -108,7 +113,7 @@ play.filters.brotli {
 
 ## Streaming
 
-The Play filter compresses a response as it is produced: a streamed or chunked response is not held in memory until it ends, and its compressed bytes are sent at the latest `flushInterval` (5 ms by default) after the chunk that they come from is available. Chunks that arrive within the interval share a block, so the size of the output is the size of the output of a single call, whatever the size of the chunks. Only a strict body, or a streamed body that is no larger than `chunkedThreshold`, is compressed in one call.
+The Play filter compresses a response as it is produced: a streamed or chunked response is not held in memory until it ends, and the encoder is flushed when the oldest chunk that it holds has waited `flushInterval` (5 ms by default). That is a target, not a deadline: the timer has the resolution of the scheduler of the actor system (10 ms by default), and the flushed bytes are sent when the client is ready to receive them. Chunks that arrive within the interval share a block, so the size of the output is the size of the output of a single call, whatever the size of the chunks. Only a strict body, or a streamed body that is no larger than `chunkedThreshold`, is compressed in one call.
 
 The Akka and Pekko modules, which the filter is built on, are incremental as well:
 

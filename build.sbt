@@ -200,7 +200,8 @@ lazy val bench = project
       "org.playframework" %% "play" % "3.0.12",
       "org.playframework" %% "play-filters-helpers" % "3.0.12",
       "org.playframework" %% "play-test" % "3.0.12",
-      "org.playframework" %% "play-netty-server" % "3.0.12"
+      "org.playframework" %% "play-netty-server" % "3.0.12",
+      "org.scalatest" %% "scalatest" % "3.2.17" % Test
     ),
     /* The benchmarks compress the minified bootstrap css that the Play tests use */
     Compile / unmanagedResourceDirectories += baseDirectory.value / ".." / "play-v29" / "src" / "test" / "resources"
