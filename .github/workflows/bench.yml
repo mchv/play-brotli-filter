@@ -1,8 +1,12 @@
 name: bench
 # Measures two commits on the same runner, one after the other: the JMH FilterBench and the load test of bench/README.md.
-# The runner is shared and noisy, so compare the two commits with each other, and each brotli row with the gzip row of
-# its own run, not with figures from another machine.
+# Runs on a pull request when it gets the label "bench" (the base of the pull request against its head), and by hand
+# from the Actions tab or `gh workflow run bench.yml -f base=main -f head=<branch>`. The runner is shared and noisy, so
+# compare the two commits with each other, and each brotli row with the gzip row of its own run, not with figures from
+# another machine.
 on:
+  pull_request:
+    types: [labeled]
   workflow_dispatch:
     inputs:
       base:
@@ -32,23 +36,34 @@ on:
         description: "Seconds measured per load test run, after 3 seconds of warm-up"
         default: "6"
 
+env:
+  BASE: ${{ inputs.base || github.event.pull_request.base.sha }}
+  HEAD: ${{ inputs.head || github.event.pull_request.head.sha }}
+  BASE_CODECS: ${{ inputs.base_codecs || 'none,gzip,br4,br5' }}
+  HEAD_CODECS: ${{ inputs.head_codecs || 'none,gzip,br4,br5,br' }}
+  BASE_FILTERS: ${{ inputs.base_filters || 'gzip,br' }}
+  HEAD_FILTERS: ${{ inputs.head_filters || 'gzip,brq5,br' }}
+  SERIES: ${{ inputs.series || '3' }}
+  SECONDS_MEASURED: ${{ inputs.seconds || '6' }}
+
 jobs:
   bench:
     name: Bench
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'bench'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
       - name: Checkout base
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.base }}
+          ref: ${{ env.BASE }}
           path: base
           show-progress: false
 
       - name: Checkout head
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.head }}
+          ref: ${{ env.HEAD }}
           path: head
           show-progress: false
 
@@ -66,7 +81,7 @@ jobs:
         run: |
           echo "## Machine" >> "$GITHUB_STEP_SUMMARY"
           { nproc; grep -m1 'model name' /proc/cpuinfo; free -g | head -2; } | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "base: $(git -C base rev-parse --short HEAD) ${{ inputs.base }}, head: $(git -C head rev-parse --short HEAD) ${{ inputs.head }}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "base: $(git -C base rev-parse --short HEAD) $BASE, head: $(git -C head rev-parse --short HEAD) $HEAD" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Compile
         run: |
@@ -76,8 +91,8 @@ jobs:
       - name: FilterBench
         run: |
           bodies=strict4k,strict140k,streamed140k,chunked140k,chunkedTiny140k
-          (cd base && sbt -batch "bench/Jmh/run -p codec=${{ inputs.base_codecs }} -p body=$bodies bench.FilterBench") 2>&1 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tee base-filterbench.log
-          (cd head && sbt -batch "bench/Jmh/run -p codec=${{ inputs.head_codecs }} -p body=$bodies bench.FilterBench") 2>&1 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tee head-filterbench.log
+          (cd base && sbt -batch "bench/Jmh/run -p codec=$BASE_CODECS -p body=$bodies bench.FilterBench") 2>&1 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tee base-filterbench.log
+          (cd head && sbt -batch "bench/Jmh/run -p codec=$HEAD_CODECS -p body=$bodies bench.FilterBench") 2>&1 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tee head-filterbench.log
           for which in base head; do
             echo "## FilterBench $which (us/op)" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -88,12 +103,12 @@ jobs:
 
       - name: Load test
         run: |
-          for ((serie = 1; serie <= ${{ inputs.series }}; serie++)); do
-            (cd base && bench/load-test.sh 16 3 ${{ inputs.seconds }} 10 1 ${{ inputs.base_filters }}) | tee -a base-load.log
-            (cd head && bench/load-test.sh 16 3 ${{ inputs.seconds }} 10 1 ${{ inputs.head_filters }}) | tee -a head-load.log
+          for ((serie = 1; serie <= SERIES; serie++)); do
+            (cd base && bench/load-test.sh 16 3 "$SECONDS_MEASURED" 10 1 "$BASE_FILTERS") | tee -a base-load.log
+            (cd head && bench/load-test.sh 16 3 "$SECONDS_MEASURED" 10 1 "$HEAD_FILTERS") | tee -a head-load.log
           done
           for which in base head; do
-            echo "## Load test $which (medians of ${{ inputs.series }} series)" >> "$GITHUB_STEP_SUMMARY"
+            echo "## Load test $which (medians of $SERIES series)" >> "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"
             "$which/bench/load-summary.sh" "$which-load.log" | tee -a "$GITHUB_STEP_SUMMARY"
             echo '```' >> "$GITHUB_STEP_SUMMARY"

@@ -47,8 +47,9 @@ share the JVM, hence the CPU: compare the filters with each other, not with othe
 
 ## Measuring two commits
 
-The `bench` workflow (`.github/workflows/bench.yml`, run by hand from the Actions tab or with
-`gh workflow run bench.yml --ref <branch> -f base=main -f head=<branch>`) checks out two commits on the same runner and
-runs `FilterBench` and the load test for each, the load test series alternating between the two. The summary of the run
-has the figures, and the logs are an artifact. The runner is shared and noisy: compare the two commits with each other,
-and each brotli row with the gzip row of its own run.
+The `bench` workflow (`.github/workflows/bench.yml`) checks out two commits on the same runner and runs `FilterBench`
+and the load test for each, the load test series alternating between the two. It runs on a pull request that gets the
+label `bench`, measuring the pull request against its base, and by hand from the Actions tab or with
+`gh workflow run bench.yml -f base=main -f head=<branch>`, where the codecs, filters and series can be set. The summary
+of the run has the figures, and the logs are an artifact. The runner is shared and noisy: compare the two commits with
+each other, and each brotli row with the gzip row of its own run.
