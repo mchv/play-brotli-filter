@@ -47,9 +47,14 @@ share the JVM, hence the CPU: compare the filters with each other, not with othe
 
 ## Measuring two commits
 
-The `bench` workflow (`.github/workflows/bench.yml`) checks out two commits on the same runner and runs `FilterBench`
-and the load test for each, the load test series alternating between the two. It runs on a pull request that gets the
-label `bench`, measuring the pull request against its base, and by hand from the Actions tab or with
-`gh workflow run bench.yml -f base=main -f head=<branch>`, where the codecs, filters and series can be set. The summary
-of the run has the figures, and the logs are an artifact. The runner is shared and noisy: compare the two commits with
-each other, and each brotli row with the gzip row of its own run.
+`bench/compare.sh <base checkout> <head checkout> [out dir] [series] [base filters] [head filters]` runs `FilterBench`
+for the base then for the head, then three series of the load test alternating between the two, so that both see the
+same machine, and prints the compressed sizes, the JMH rows and the load summaries. The logs go to
+`bench/results/<date>` by default, next to the measurements of merged changes (`bench/results/2026-11-04-m4pro` is
+`main` at a6f3b37 against the branch of #8). The machine is rarely idle: compare the two commits with each other, and
+each brotli row with the gzip row of its own log.
+
+The two checkouts must be separate clones or worktrees, and a compile that sbt 2 finds in its disk cache comes back as
+links into the cache, which the JMH source generator cannot compile into (`javac` fails to write the generated
+classes): `sbt clean` the checkout, or run with a cold cache. This is also why a GitHub workflow that builds two
+checkouts in one job does not work with sbt 2 and sbt-jmh yet.
