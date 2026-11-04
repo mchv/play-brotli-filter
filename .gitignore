@@ -12,6 +12,8 @@ project/metals.sbt
 
 
 # sbt
+# bench/compare.sh
+bench-results/
 project/project/
 project/target/
 target/
