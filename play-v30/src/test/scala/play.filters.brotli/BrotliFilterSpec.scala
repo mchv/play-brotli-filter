@@ -187,16 +187,6 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
     }
 
     "fit the window to a streamed body of known length, and keep the default window when the length is not known" in {
-      // The window is the first thing in a brotli stream (RFC 7932, section 9.1)
-      def windowBits(compressed: ByteString): Int = {
-        val first = compressed(0) & 0xff
-        if ((first & 1) == 0) 16
-        else if (((first >> 1) & 7) != 0) 17 + ((first >> 1) & 7)
-        else {
-          val m = (first >> 4) & 7
-          if (m == 0) 17 else 8 + m
-        }
-      }
       def windowOf(entity: HttpEntity): Int =
         withApplication(Ok.sendEntity(entity), chunkedThreshold = 512) { app =>
           windowBits(contentAsBytes(makeBrotliRequest(app))(defaultAwaitTimeout, app.materializer))
@@ -204,6 +194,36 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
       val known = windowOf(HttpEntity.Streamed(source, Some(contentLength), Some("text/css")))
       val unknown = windowOf(HttpEntity.Streamed(source, None, Some("text/css")))
       (known must_== BrotliCompressor.windowFor(contentLength.toInt)) and (unknown must_== 22)
+    }
+
+    "keep a configured window for a streamed body of known length" in withApplication(
+      Ok.sendEntity(HttpEntity.Streamed(source, Some(contentLength), Some("text/css"))),
+      chunkedThreshold = 512,
+      settings = Seq("play.filters.brotli.window" -> 16)) { app =>
+        windowBits(contentAsBytes(makeBrotliRequest(app))(defaultAwaitTimeout, app.materializer)) must_== 16
+    }
+
+    "compress many different responses concurrently through one filter, each to its own body" in {
+      val application = new GuiceApplicationBuilder()
+        .configure("play.filters.brotli.chunkedThreshold" -> 1024)
+        .overrides(bind[Router].to[PathRouter], bind[HttpFilters].to[Filters])
+        .build()
+      running(application) {
+        implicit val mat: Materializer = application.materializer
+        implicit val ec: scala.concurrent.ExecutionContext = application.actorSystem.dispatcher
+        val paths = concurrentTexts.keys.toVector.sorted
+        def check(i: Int): Future[Boolean] = {
+          val path = paths(i % paths.size)
+          route(application, FakeRequest(GET, path).withHeaders(ACCEPT_ENCODING -> "br")).get.flatMap { result =>
+            result.body.consumeData.map { bytes =>
+              result.header.headers.get(CONTENT_ENCODING).contains("br") && uncompress(bytes) == concurrentTexts(path)
+            }
+          }
+        }
+        // 24 waves of 25 requests that run at the same time
+        val all = (0 until 600).grouped(25).toList.flatMap(wave => Await.result(Future.sequence(wave.map(check)), 60.seconds))
+        (all.size must_== 600) and (all.count(identity) must_== 600)
+      }
     }
 
     "preserve original headers" in withApplication(Ok("hello").withHeaders(SERVER -> "Play")) { implicit app =>
@@ -376,6 +396,47 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
       results.reduce(_ and _)
     }
   }
+
+  // The window is the first thing in a brotli stream (RFC 7932, section 9.1)
+  def windowBits(compressed: ByteString): Int = {
+    val first = compressed(0) & 0xff
+    if ((first & 1) == 0) 16
+    else if (((first >> 1) & 7) != 0) 17 + ((first >> 1) & 7)
+    else {
+      val m = (first >> 4) & 7
+      if (m == 0) 17 else 8 + m
+    }
+  }
+
+  // The responses of the concurrency test: different sizes and shapes, each with a text of its own
+  private def text(seed: Int, length: Int): String = {
+    val random = new Random(seed)
+    val vocabulary = Vector("alpha", "beta", "gamma", "delta", "play", "brotli", "filter", "stream", "window", "flush")
+    // every word is 4 characters or more, with the space: length / 4 + 1 words are enough
+    Iterator.continually(vocabulary(random.nextInt(vocabulary.size))).take(length / 4 + 1).mkString(" ").take(length)
+  }
+
+  private val concurrentTexts: Map[String, String] = Map(
+    "/small" -> text(1, 2000),
+    "/large" -> text(2, 150000),
+    "/streamed" -> text(3, 120000),
+    "/unknown" -> text(4, 80000),
+    "/chunked" -> text(5, 100000),
+    "/tiny" -> text(6, 30000)
+  )
+
+  private def pieces(text: String, size: Int): List[ByteString] = text.getBytes("UTF-8").grouped(size).map(ByteString(_)).toList
+
+  private val concurrentResults: Map[String, Result] = Map(
+    "/small" -> Ok(concurrentTexts("/small")),
+    "/large" -> Ok(concurrentTexts("/large")),
+    "/streamed" -> Ok.sendEntity(HttpEntity.Streamed(Source(pieces(concurrentTexts("/streamed"), 8192)), Some(concurrentTexts("/streamed").length.toLong), None)),
+    "/unknown" -> Ok.sendEntity(HttpEntity.Streamed(Source(pieces(concurrentTexts("/unknown"), 8192)), None, None)),
+    "/chunked" -> Ok.chunked(Source(pieces(concurrentTexts("/chunked"), 8192))),
+    "/tiny" -> Ok.chunked(Source(pieces(concurrentTexts("/tiny"), 256)))
+  )
+
+  class PathRouter @Inject() (action: DefaultActionBuilder) extends SimpleRouterImpl({ case request => action(concurrentResults(request.path)) })
 
   class Filters @Inject() (brotliFilter: BrotliFilter) extends HttpFilters {
     def filters = Seq(brotliFilter)
