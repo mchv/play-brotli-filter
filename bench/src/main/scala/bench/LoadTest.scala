@@ -30,10 +30,14 @@ import play.filters.gzip.{ GzipFilter, GzipFilterConfig }
  * real connections. It reports the throughput, the latency, and the CPU, the garbage collection and the allocation per
  * request, and it checks that the compressed responses decode to the right body.
  *
- * Usage: `LoadTest <gzip|br|brN> <small|large|streamed|chunked|tiny> <connections> <warm-up seconds> <seconds> <verify every n>`
+ * Usage: `LoadTest <filter> <small|large|streamed|chunked|tiny> <connections> <warm-up seconds> <seconds> <verify every n>`
  *
- * `brN` is the brotli filter with a flush interval of N milliseconds (`br0` flushes after every chunk, like the gzip
- * filter); `br` is the brotli filter with its default configuration.
+ * `filter` is `gzip`, or `br` for the brotli filter with its default configuration, followed by options separated by
+ * `/`: `q4` is the quality, `f20` the flush interval in milliseconds (0 flushes after every chunk, like the gzip
+ * filter), `b0` the buffer size in bytes. For example `br/q4/f20`. `brN` is `br/fN`.
+ *
+ * `verify every n` decodes every n-th response and compares it with the original body; 0 never does, which leaves
+ * the CPU of the clients the same for both filters: use it for the figures, and a run that verifies for the correctness.
  *
  * The server and the clients share the JVM, hence the CPU: compare filters with the same arguments, not with other
  * machines. The CPU per request includes the clients, which do the same work for each filter apart from decoding the
@@ -60,15 +64,22 @@ object LoadTest {
     val verifyEvery = verifyArg.toInt
     Brotli4jLoader.ensureAvailability()
 
+    val parts = filterName.split("/")
+    val base = parts.head
+    def option(prefix: Char): Option[String] = parts.tail.find(_.headOption.contains(prefix)).map(_.drop(1))
+
     val components = new NettyServerComponents with BuiltInComponents {
       override lazy val serverConfig: ServerConfig = ServerConfig(port = Some(0), address = "127.0.0.1")
 
-      override lazy val httpFilters: Seq[EssentialFilter] = Seq(filterName match {
+      override lazy val httpFilters: Seq[EssentialFilter] = Seq(base match {
         case "gzip" => new GzipFilter(GzipFilterConfig.fromConfiguration(configuration))(materializer)
-        case "br" => new BrotliFilter(BrotliFilterConfig.fromConfiguration(configuration))(materializer)
         case brotli if brotli.startsWith("br") =>
-          new BrotliFilter(
-            BrotliFilterConfig.fromConfiguration(configuration).withFlushInterval(brotli.drop(2).toInt.millis))(materializer)
+          var config = BrotliFilterConfig.fromConfiguration(configuration)
+          if (brotli.length > 2) config = config.withFlushInterval(brotli.drop(2).toInt.millis)
+          option('q').foreach(quality => config = config.withQuality(quality.toInt))
+          option('f').foreach(interval => config = config.withFlushInterval(interval.toInt.millis))
+          option('b').foreach(size => config = config.withBufferSize(size.toInt))
+          new BrotliFilter(config)(materializer)
       })
 
       override lazy val router: Router = Router.from {
@@ -91,7 +102,7 @@ object LoadTest {
     val port = server.httpPort.get
 
     val expected = if (endpoint == "small") css.take(4096) else css
-    val gzip = filterName == "gzip"
+    val gzip = base == "gzip"
     val encoding = if (gzip) "gzip" else "br"
     val client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
     val request = HttpRequest.newBuilder(new URI(s"http://127.0.0.1:$port/$endpoint")).header("Accept-Encoding", encoding).build()
@@ -112,7 +123,7 @@ object LoadTest {
     val failures = new AtomicLong
     val firstError = new AtomicReference[String]
     val bytes = new AtomicLong
-    val latencies = Array.fill(connections)(new Array[Long](2000000))
+    val latencies = Array.fill(connections)(new Array[Long](200000))
     val counts = new Array[Int](connections)
 
     val os = ManagementFactory.getOperatingSystemMXBean.asInstanceOf[com.sun.management.OperatingSystemMXBean]
@@ -142,7 +153,7 @@ object LoadTest {
             val contentEncoding = response.headers.firstValue("Content-Encoding").orElse("")
             if (status != 200 || contentEncoding != encoding) failed(s"status $status, content encoding '$contentEncoding'")
             n += 1
-            if (n % verifyEvery == 0 && !java.util.Arrays.equals(decode(response.body), expected)) failed("the decoded body differs")
+            if (verifyEvery > 0 && n % verifyEvery == 0 && !java.util.Arrays.equals(decode(response.body), expected)) failed("the decoded body differs")
             if (sent >= measureFrom) {
               if (counts(i) < latencies(i).length) { latencies(i)(counts(i)) = took; counts(i) += 1 }
               bytes.addAndGet(response.body.length.toLong)
