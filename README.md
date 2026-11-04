@@ -113,7 +113,7 @@ play.filters.brotli {
 
 ## Streaming
 
-The Play filter compresses a response as it is produced: a streamed or chunked response is not held in memory until it ends, and the encoder is flushed when the oldest chunk that it holds has waited `flushInterval` (5 ms by default). That is a target, not a deadline: the timer has the resolution of the scheduler of the actor system (10 ms by default), and the flushed bytes are sent when the client is ready to receive them. Chunks that arrive within the interval share a block, so the size of the output is the size of the output of a single call, whatever the size of the chunks. Only a strict body, or a streamed body that is no larger than `chunkedThreshold`, is compressed in one call.
+The Play filter compresses a response as it is produced: a streamed or chunked response is not held in memory until it ends, and the encoder is flushed when the oldest chunk that it holds has waited `flushInterval` (5 ms by default). That is a target, not a deadline: the timer has the resolution of the scheduler of the actor system (10 ms by default), and the flushed bytes are sent when the client is ready to receive them. Chunks that arrive within the interval share a block, so the size of the output is the size of the output of a single call, whatever the size of the chunks. Only a strict body, or a streamed body that is no larger than `chunkedThreshold`, is compressed in one call. A streamed or chunked response goes through a single stage, which for a chunked response passes the last chunk and its trailers after the compressed data.
 
 The Akka and Pekko modules, which the filter is built on, are incremental as well:
 

@@ -20,7 +20,7 @@ import java.util.function.BiFunction
 import java.util.Locale
 import javax.inject.{ Provider, Inject, Singleton }
 
-import akka.stream.{ OverflowStrategy, FlowShape, Materializer }
+import akka.stream.Materializer
 import akka.stream.scaladsl._
 import akka.util.ByteString
 import com.typesafe.config.ConfigMemorySize
@@ -116,35 +116,12 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
 
         case HttpEntity.Streamed(data, contentLength, contentType) =>
           // It's above the chunked threshold, compress through the brotli flow, and send as chunked
-          val compressed = data.via(flowFor(contentLength)).map(d => HttpChunk.Chunk(d))
+          val compressed = data.via(chunksFlowFor(contentLength))
           Future.successful(result.copy(header = header, body = HttpEntity.Chunked(compressed, contentType)))
 
         case HttpEntity.Chunked(chunks, contentType) =>
-          val wrappedFlow = Flow.fromGraph(GraphDSL.create[FlowShape[HttpChunk, HttpChunk]]() { implicit builder =>
-            import GraphDSL.Implicits._
-
-            val extractChunks = Flow[HttpChunk] collect { case HttpChunk.Chunk(data) => data }
-
-            val createChunks = Flow[ByteString].map[HttpChunk](HttpChunk.Chunk.apply)
-            val filterLastChunk = Flow[HttpChunk]
-              .filter(_.isInstanceOf[HttpChunk.LastChunk])
-              // Since we're doing a merge by concatenating, the filter last chunk won't receive demand until the brotli
-              // flow is finished. But the broadcast won't start broadcasting until both flows start demanding. So we
-              // put a buffer of one in to ensure the filter last chunk flow demands from the broadcast.
-              .buffer(1, OverflowStrategy.backpressure)
-
-            val broadcast = builder.add(Broadcast[HttpChunk](2))
-            val concat = builder.add(Concat[HttpChunk]())
-
-            // Broadcast the stream through two separate flows, one that collects chunks and turns them into
-            // ByteStrings, sends them through the Brotli flow as they come, and then turns them back into chunks,
-            // the other that just allows the last chunk through. Then concat those two flows together.
-            broadcast.out(0) ~> extractChunks ~> defaultFlow ~> createChunks ~> concat.in(0)
-            broadcast.out(1) ~> filterLastChunk ~> concat.in(1)
-
-            new FlowShape(broadcast.in, concat.out)
-          })
-          Future.successful(result.copy(header = header, body = HttpEntity.Chunked(chunks via wrappedFlow, contentType)))
+          // One stage compresses the data of the chunks and passes the last chunk, with its trailers, after the compressed data
+          Future.successful(result.copy(header = header, body = HttpEntity.Chunked(chunks.via(chunkedFlow), contentType)))
       }
     } else {
       Future.successful(result)
@@ -159,25 +136,45 @@ class BrotliFilter @Inject() (config: BrotliFilterConfig)(implicit mat: Material
   private val defaultFlow: Flow[ByteString, ByteString, _] =
     BrotliFlow.brotli(config.bufferSize, config.encoderParameters, config.flushInterval)
 
+  /** A streamed body sent as chunks, in one stage: the data is compressed into the chunks. */
+  private val defaultChunksFlow: Flow[ByteString, HttpChunk, _] =
+    BrotliFlow.brotliToChunks(config.bufferSize, config.encoderParameters, config.flushInterval)
+
+  /** A chunked response, in one stage. Its length is not known, so it has the configured or default window. */
+  private val chunkedFlow: Flow[HttpChunk, HttpChunk, _] =
+    BrotliFlow.brotliChunks(config.bufferSize, config.encoderParameters, config.flushInterval)
+
   /**
    * With the default window the encoder sets up 2 to the power of (window + 1) bytes of ring buffer once it has a block of
    * input, which is 8 MiB with the window of 4 MiB: a body of known length needs a window that fits it, and no more.
    * One flow per window, built once.
    */
-  private val flowsByWindow: Vector[Flow[ByteString, ByteString, _]] =
+  private def byWindow[F](flow: Encoder.Parameters => F): Vector[F] =
     if (config.window != -1) Vector.empty
     else
-      (10 to 24).toVector.map { window =>
-        val parameters = new Encoder.Parameters().setQuality(config.quality).setMode(config.mode).setWindow(window)
-        BrotliFlow.brotli(config.bufferSize, parameters, config.flushInterval)
+      (BrotliCompressor.MinWindow to BrotliCompressor.MaxWindow).toVector.map { window =>
+        flow(new Encoder.Parameters().setQuality(config.quality).setMode(config.mode).setWindow(window))
       }
 
-  private def flowFor(contentLength: Option[Long]): Flow[ByteString, ByteString, _] =
+  private val flowsByWindow: Vector[Flow[ByteString, ByteString, _]] =
+    byWindow(BrotliFlow.brotli(config.bufferSize, _, config.flushInterval))
+
+  private val chunksFlowsByWindow: Vector[Flow[ByteString, HttpChunk, _]] =
+    byWindow(BrotliFlow.brotliToChunks(config.bufferSize, _, config.flushInterval))
+
+  private def fitted[F](flows: Vector[F], default: F, contentLength: Option[Long]): F =
     contentLength match {
-      case Some(length) if flowsByWindow.nonEmpty =>
-        flowsByWindow(BrotliCompressor.windowFor(math.min(length, Int.MaxValue.toLong).toInt) - 10)
-      case _ => defaultFlow
+      case Some(length) if flows.nonEmpty =>
+        flows(BrotliCompressor.windowFor(math.min(length, Int.MaxValue.toLong).toInt) - BrotliCompressor.MinWindow)
+      case _ => default
     }
+
+  /** The close delimited body of an HTTP/1.0 response. */
+  private def flowFor(contentLength: Option[Long]): Flow[ByteString, ByteString, _] =
+    fitted(flowsByWindow, defaultFlow, contentLength)
+
+  private def chunksFlowFor(contentLength: Option[Long]): Flow[ByteString, HttpChunk, _] =
+    fitted(chunksFlowsByWindow, defaultChunksFlow, contentLength)
 
   private val strictParameters: Encoder.Parameters = config.encoderParameters // only read
 
