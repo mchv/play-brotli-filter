@@ -50,7 +50,9 @@ jobs:
   bench:
     name: Bench
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'bench'
-    runs-on: ubuntu-latest
+    # The build of the assembled brotli4s jar fails under sbt-jmh on the Linux runner (a jar of another Scala version is
+    # looked for); the macOS runners build it, as the build workflow shows.
+    runs-on: macos-latest
     timeout-minutes: 120
     steps:
       - name: Checkout base
@@ -80,16 +82,20 @@ jobs:
       - name: Machine
         run: |
           echo "## Machine" >> "$GITHUB_STEP_SUMMARY"
-          { nproc; grep -m1 'model name' /proc/cpuinfo; free -g | head -2; } | tee -a "$GITHUB_STEP_SUMMARY"
+          { sysctl -n hw.ncpu machdep.cpu.brand_string hw.memsize 2>/dev/null || { nproc; grep -m1 'model name' /proc/cpuinfo; }; } | tee -a "$GITHUB_STEP_SUMMARY"
           echo "base: $(git -C base rev-parse --short HEAD) $BASE, head: $(git -C head rev-parse --short HEAD) $HEAD" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Compile
         run: |
           (cd base && sbt -batch "bench/compile")
           (cd head && sbt -batch "bench/compile")
+          # The benchmark run fails on some runners while the compile passes: fail here, with the full trace
+          (cd base && sbt -batch "bench/Jmh/run -h" > /dev/null || sbt -batch "last bench/Jmh/run")
+          (cd head && sbt -batch "bench/Jmh/run -h" > /dev/null || sbt -batch "last bench/Jmh/run")
 
       - name: FilterBench
         run: |
+          set -o pipefail
           bodies=strict4k,strict140k,streamed140k,chunked140k,chunkedTiny140k
           (cd base && sbt -batch "bench/Jmh/run -p codec=$BASE_CODECS -p body=$bodies bench.FilterBench") 2>&1 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tee base-filterbench.log
           (cd head && sbt -batch "bench/Jmh/run -p codec=$HEAD_CODECS -p body=$bodies bench.FilterBench") 2>&1 | sed 's/\x1b\[[0-9;]*[A-Za-z]//g' | tee head-filterbench.log
@@ -103,6 +109,7 @@ jobs:
 
       - name: Load test
         run: |
+          set -o pipefail
           for ((serie = 1; serie <= SERIES; serie++)); do
             (cd base && bench/load-test.sh 16 3 "$SECONDS_MEASURED" 10 1 "$BASE_FILTERS") | tee -a base-load.log
             (cd head && bench/load-test.sh 16 3 "$SECONDS_MEASURED" 10 1 "$HEAD_FILTERS") | tee -a head-load.log
