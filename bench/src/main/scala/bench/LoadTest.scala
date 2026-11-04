@@ -123,8 +123,10 @@ object LoadTest {
     val failures = new AtomicLong
     val firstError = new AtomicReference[String]
     val bytes = new AtomicLong
-    val latencies = Array.fill(connections)(new Array[Long](200000))
-    val counts = new Array[Int](connections)
+    // Each worker writes its own histogram and its own counter: the number of requests does not depend on the room of the
+    // histogram, which keeps the latencies of the whole run in bounded memory
+    val latencies = Array.fill(connections)(new LatencyHistogram)
+    val completed = new Array[Long](connections)
 
     val os = ManagementFactory.getOperatingSystemMXBean.asInstanceOf[com.sun.management.OperatingSystemMXBean]
     val threads = ManagementFactory.getThreadMXBean.asInstanceOf[com.sun.management.ThreadMXBean]
@@ -155,7 +157,8 @@ object LoadTest {
             n += 1
             if (verifyEvery > 0 && n % verifyEvery == 0 && !java.util.Arrays.equals(decode(response.body), expected)) failed("the decoded body differs")
             if (sent >= measureFrom) {
-              if (counts(i) < latencies(i).length) { latencies(i)(counts(i)) = took; counts(i) += 1 }
+              latencies(i).record(took)
+              completed(i) += 1
               bytes.addAndGet(response.body.length.toLong)
             }
           } catch {
@@ -181,9 +184,10 @@ object LoadTest {
     server.stop()
 
     val seconds = (time1 - time0) / 1e9
-    val all = (0 until connections).flatMap(i => latencies(i).take(counts(i))).sorted
-    val requests = all.size.toLong
-    def percentile(p: Double): Double = all((all.size * p).toInt.min(all.size - 1)) / 1000.0
+    val all = new LatencyHistogram
+    latencies.foreach(all.add)
+    val requests = completed.sum
+    def percentile(p: Double): Double = all.percentile(p)
     println(
       f"RESULT filter=$filterName%-4s endpoint=$endpoint%-8s connections=$connections%-3d requests=$requests%-7d " +
         f"rps=${requests / seconds}%8.0f p50=${percentile(0.5)}%8.0fus p95=${percentile(0.95)}%8.0fus p99=${percentile(0.99)}%8.0fus " +
