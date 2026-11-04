@@ -2,7 +2,7 @@
 # Runs bench.LoadTest for every filter and endpoint, in a JVM of its own each, and repeats the whole series so that the
 # noise of the machine can be averaged out: the order of the filters alternates from one series to the next.
 # Usage: bench/load-test.sh [connections] [warm-up seconds] [seconds] [verify every n responses] [series] [filters] [endpoints]
-# where filters and endpoints are lists separated by commas, for example gzip,br,br0 (see bench.LoadTest).
+# where filters and endpoints are lists separated by commas, for example gzip,br,br0,brq5 (see bench.LoadTest).
 set -euo pipefail
 
 connections="${1:-16}"

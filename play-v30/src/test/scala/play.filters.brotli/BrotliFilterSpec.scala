@@ -14,7 +14,8 @@ import play.api.inject._
 import play.api.inject.guice.GuiceApplicationBuilder
 import play.api.routing.{Router, SimpleRouterImpl}
 import play.api.test._
-import play.api.mvc.{ AnyContentAsEmpty, Action, DefaultActionBuilder, Result }
+import play.api.mvc.{ AnyContentAsEmpty, Action, DefaultActionBuilder, Headers, Result }
+import play.api.http.HttpChunk
 import play.api.mvc.Results._
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -33,6 +34,7 @@ import org.specs2.matcher.{DataTables, MatchResult}
 import com.aayushatharva.brotli4j.decoder.BrotliInputStream;
 import play.api.mvc.Cookie
 import play.api.libs.streams.BrotliFlow
+import org.apache.pekko.stream.io.compression.brotli.BrotliCompressor
 
 object BrotliFilterSpec extends PlaySpecification with DataTables {
 
@@ -113,6 +115,30 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
 
       checkCompressedBody(result, "foobar")(app.materializer)
       await(result).body must beAnInstanceOf[HttpEntity.Chunked]
+    }
+
+    "send the last chunk of a chunked response, with its trailers, after the compressed data" in {
+      val chunks = Source(List(HttpChunk.Chunk(ByteString("foo")), HttpChunk.Chunk(ByteString("bar")), HttpChunk.LastChunk(Headers("X-Trailer" -> "yes"))))
+      withApplication(Ok.sendEntity(HttpEntity.Chunked(chunks, None))) { app =>
+        implicit val mat: Materializer = app.materializer
+        val body = await(makeBrotliRequest(app)).body
+        body must beAnInstanceOf[HttpEntity.Chunked]
+        val received = Await.result(body.asInstanceOf[HttpEntity.Chunked].chunks.runWith(Sink.seq), 5.seconds)
+        val data = received.collect { case HttpChunk.Chunk(d) => d }.foldLeft(ByteString.empty)(_ ++ _)
+        (uncompress(data) must_== "foobar") and
+          (received.last must_== HttpChunk.LastChunk(Headers("X-Trailer" -> "yes"))) and
+          (received.count(_.isInstanceOf[HttpChunk.LastChunk]) must_== 1)
+      }
+    }
+
+    "end a chunked response that has no last chunk" in {
+      val chunks = Source(List(HttpChunk.Chunk(ByteString("foo")), HttpChunk.Chunk(ByteString("bar"))))
+      withApplication(Ok.sendEntity(HttpEntity.Chunked(chunks, None))) { app =>
+        implicit val mat: Materializer = app.materializer
+        val received = Await.result(await(makeBrotliRequest(app)).body.asInstanceOf[HttpEntity.Chunked].chunks.runWith(Sink.seq), 5.seconds)
+        val data = received.collect { case HttpChunk.Chunk(d) => d }.foldLeft(ByteString.empty)(_ ++ _)
+        (uncompress(data) must_== "foobar") and (received.exists(_.isInstanceOf[HttpChunk.LastChunk]) must beFalse)
+      }
     }
 
     "hold the compressed data of chunks that arrive quickly until the flush interval, and flush every chunk for an interval of 0" in {
@@ -258,15 +284,15 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
       (best.length must be_<(fast.length)) and (uncompress(fast) must_== sample) and (uncompress(best) must_== sample)
     }
 
-    "produce a smaller streamed body with a higher quality" in {
-      val fast = compressedBytes(streamed(sample), s"$prefix.quality" -> 0)
-      val best = compressedBytes(streamed(sample), s"$prefix.quality" -> 11)
+    "produce a smaller streamed body with a higher stream quality" in {
+      val fast = compressedBytes(streamed(sample), s"$prefix.streamQuality" -> 0)
+      val best = compressedBytes(streamed(sample), s"$prefix.streamQuality" -> 11)
       (best.length must be_<(fast.length)) and (uncompress(fast) must_== sample) and (uncompress(best) must_== sample)
     }
 
     "use the encoder default for a quality of -1, for strict and streamed bodies" in {
       (compressedBytes(Ok(sample), s"$prefix.quality" -> -1) must_== compressedBytes(Ok(sample), s"$prefix.quality" -> 11)) and
-        (compressedBytes(streamed(sample), s"$prefix.quality" -> -1) must_== compressedBytes(streamed(sample), s"$prefix.quality" -> 11))
+        (compressedBytes(streamed(sample), s"$prefix.streamQuality" -> -1) must_== compressedBytes(streamed(sample), s"$prefix.streamQuality" -> 11))
     }
 
     "use the window for a strict body" in {
@@ -281,6 +307,42 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
       val large = compressedBytes(streamed(block + block), s"$prefix.window" -> 16)
       (small.length must be_>(large.length * 3 / 2)) and (uncompress(small) must_== block + block) and
         (uncompress(large) must_== block + block)
+    }
+
+    "compress a streamed or chunked body with the stream quality, and a strict body with the quality" in {
+      val chunked = Ok.chunked(Source(sample.grouped(1000).toList))
+      val fastStream = compressedBytes(streamed(sample), s"$prefix.streamQuality" -> 0)
+      val bestStream = compressedBytes(streamed(sample), s"$prefix.streamQuality" -> 11)
+      val fastChunked = compressedBytes(chunked, s"$prefix.streamQuality" -> 0)
+      val bestChunked = compressedBytes(chunked, s"$prefix.streamQuality" -> 11)
+      val strict = compressedBytes(Ok(sample), s"$prefix.streamQuality" -> 0)
+      (bestStream.length must be_<(fastStream.length)) and (bestChunked.length must be_<(fastChunked.length)) and
+        (strict must_== compressedBytes(Ok(sample), s"$prefix.streamQuality" -> 11)) and
+        (uncompress(fastStream) must_== sample) and (uncompress(bestChunked) must_== sample)
+    }
+
+    // The window is the first thing in a brotli stream (RFC 7932, section 9.1)
+    def windowBits(compressed: ByteString): Int = {
+      val first = compressed(0) & 0xff
+      if ((first & 1) == 0) 16
+      else if (((first >> 1) & 7) != 0) 17 + ((first >> 1) & 7)
+      else {
+        val m = (first >> 4) & 7
+        if (m == 0) 17 else 8 + m
+      }
+    }
+
+    "fit the window to a streamed body with a known length, and keep the window of one of unknown length" in {
+      def streamedOf(length: Option[Long], settings: (String, Any)*): ByteString =
+        withApplication(
+          Ok.sendEntity(HttpEntity.Streamed(Source(sample.grouped(1000).map(ByteString(_)).toList), length, None)),
+          chunkedThreshold = 512, settings = settings
+        ) { app => contentAsBytes(makeBrotliRequest(app))(defaultAwaitTimeout, app.materializer) }
+      val known = Some(sample.length.toLong)
+      (windowBits(streamedOf(known)) must_== BrotliCompressor.windowFor(sample.length)) and
+        (windowBits(streamedOf(None)) must_== 22) and
+        (windowBits(streamedOf(known, s"$prefix.window" -> 20)) must_== 20) and
+        (uncompress(streamedOf(known)) must_== sample)
     }
 
     "compress strict and streamed bodies with every mode" in {

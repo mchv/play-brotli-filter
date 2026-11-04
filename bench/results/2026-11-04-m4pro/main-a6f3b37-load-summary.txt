@@ -1,0 +1,11 @@
+endpoint  filter   runs     req/s    p50 us    p99 us   bytes   cpu us alloc KB    gc fail
+small     gzip       3     15030       858      4203    1681      353      121    24    0
+small     br         3     19838       692      2552    1470      288       45    13    0
+large     gzip       3      2930      3211     38229   21046     2430      635    21    0
+large     br         3      3740      3040     29722   18857     1678      118    11    0
+streamed  gzip       3      1838      6367     49644   21046     3231      513    15    0
+streamed  br         3      2937      3745     38819   18857     1934      273    14    0
+chunked   gzip       3      1712      6247     63174   21046     3437      537    15    0
+chunked   br         3      2532      4151     49633   18857     2036      298    15    0
+tiny      gzip       3       473     25469    160211   27757    12507     1748    11    0
+tiny      br         3      3070      3479     39922   18857     2106      327    18    0

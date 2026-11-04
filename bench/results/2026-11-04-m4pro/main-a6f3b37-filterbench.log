@@ -1,0 +1,686 @@
+[info] entering thin client - BEEP WHIRR
+[info] starting sbt server in the background
+[info] use 'sbt shutdown' to shutdown the server
+[info]  
+[info] welcome to sbt 2.0.11 (Homebrew Java 21.0.13)
+[info] loading project definition from /private/tmp/claude-502/-Users-mariot-Downloads/60c347f4-96eb-490a-a7c2-83c3e92e1774/scratchpad/repo/project
+[info] resolving key references (10589 settings) ...
+[info] set current project to play-brotli-filter-root (in build file:/private/tmp/claude-502/-Users-mariot-Downloads/60c347f4-96eb-490a-a7c2-83c3e92e1774/scratchpad/repo/)
+[info] Assembly jar up to date: /private/tmp/claude-502/-Users-mariot-Downloads/60c347f4-96eb-490a-a7c2-83c3e92e1774/scratchpad/repo/target/out/jvm/scala-2.13.15/brotli4s/brotli4s_2.13.jar
+[info] running (fork) org.openjdk.jmh.Main -p codec=none,gzip,br4,br5 -p body=strict4k,strict140k,streamed140k,chunked140k,chunkedTiny140k bench.FilterBench
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = strict4k, codec = none)
+
+# Run progress: 0.00% complete, ETA 00:02:40
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=none body=strict4k compressed=4096
+8.871 us/op
+# Warmup Iteration   2: 8.581 us/op
+# Warmup Iteration   3: 7.727 us/op
+Iteration   1: 7.886 us/op
+Iteration   2: 7.685 us/op
+Iteration   3: 7.645 us/op
+Iteration   4: 7.317 us/op
+Iteration   5: 7.559 us/op
+
+
+Result "bench.FilterBench.respond":
+  7.618 ±(99.9%) 0.797 us/op [Average]
+  (min, avg, max) = (7.317, 7.618, 7.886), stdev = 0.207
+  CI (99.9%): [6.821, 8.416] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = strict4k, codec = gzip)
+
+# Run progress: 5.00% complete, ETA 00:05:37
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=gzip body=strict4k compressed=1681
+95.342 us/op
+# Warmup Iteration   2: 56.160 us/op
+# Warmup Iteration   3: 49.653 us/op
+Iteration   1: 47.497 us/op
+Iteration   2: 46.704 us/op
+Iteration   3: 45.824 us/op
+Iteration   4: 47.312 us/op
+Iteration   5: 48.293 us/op
+
+
+Result "bench.FilterBench.respond":
+  47.126 ±(99.9%) 3.554 us/op [Average]
+  (min, avg, max) = (45.824, 47.126, 48.293), stdev = 0.923
+  CI (99.9%): [43.572, 50.680] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = strict4k, codec = br4)
+
+# Run progress: 10.00% complete, ETA 00:05:20
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=br4 body=strict4k compressed=1599
+57.182 us/op
+# Warmup Iteration   2: 51.682 us/op
+# Warmup Iteration   3: 50.160 us/op
+Iteration   1: 49.471 us/op
+Iteration   2: 50.836 us/op
+Iteration   3: 49.549 us/op
+Iteration   4: 48.828 us/op
+Iteration   5: 50.495 us/op
+
+
+Result "bench.FilterBench.respond":
+  49.836 ±(99.9%) 3.143 us/op [Average]
+  (min, avg, max) = (48.828, 49.836, 50.836), stdev = 0.816
+  CI (99.9%): [46.693, 52.979] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = strict4k, codec = br5)
+
+# Run progress: 15.00% complete, ETA 00:05:02
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=br5 body=strict4k compressed=1470
+62.724 us/op
+# Warmup Iteration   2: 55.937 us/op
+# Warmup Iteration   3: 54.834 us/op
+Iteration   1: 52.396 us/op
+Iteration   2: 52.856 us/op
+Iteration   3: 52.403 us/op
+Iteration   4: 53.527 us/op
+Iteration   5: 52.256 us/op
+
+
+Result "bench.FilterBench.respond":
+  52.688 ±(99.9%) 2.005 us/op [Average]
+  (min, avg, max) = (52.256, 52.688, 53.527), stdev = 0.521
+  CI (99.9%): [50.682, 54.693] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = strict140k, codec = none)
+
+# Run progress: 20.00% complete, ETA 00:04:31
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=none body=strict140k compressed=140421
+8.643 us/op
+# Warmup Iteration   2: 7.431 us/op
+# Warmup Iteration   3: 7.829 us/op
+Iteration   1: 6.520 us/op
+Iteration   2: 6.625 us/op
+Iteration   3: 6.714 us/op
+Iteration   4: 6.895 us/op
+Iteration   5: 6.866 us/op
+
+
+Result "bench.FilterBench.respond":
+  6.724 ±(99.9%) 0.611 us/op [Average]
+  (min, avg, max) = (6.520, 6.724, 6.895), stdev = 0.159
+  CI (99.9%): [6.113, 7.335] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = strict140k, codec = gzip)
+
+# Run progress: 25.00% complete, ETA 00:04:17
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=gzip body=strict140k compressed=21046
+1952.147 us/op
+# Warmup Iteration   2: 1678.344 us/op
+# Warmup Iteration   3: 1679.748 us/op
+Iteration   1: 1580.549 us/op
+Iteration   2: 1583.005 us/op
+Iteration   3: 1553.105 us/op
+Iteration   4: 1582.716 us/op
+Iteration   5: 1593.100 us/op
+
+
+Result "bench.FilterBench.respond":
+  1578.495 ±(99.9%) 57.771 us/op [Average]
+  (min, avg, max) = (1553.105, 1578.495, 1593.100), stdev = 15.003
+  CI (99.9%): [1520.725, 1636.266] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = strict140k, codec = br4)
+
+# Run progress: 30.00% complete, ETA 00:03:54
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=br4 body=strict140k compressed=22060
+584.484 us/op
+# Warmup Iteration   2: 547.836 us/op
+# Warmup Iteration   3: 540.930 us/op
+Iteration   1: 707.600 us/op
+Iteration   2: 579.637 us/op
+Iteration   3: 561.204 us/op
+Iteration   4: 550.764 us/op
+Iteration   5: 511.784 us/op
+
+
+Result "bench.FilterBench.respond":
+  582.198 ±(99.9%) 286.344 us/op [Average]
+  (min, avg, max) = (511.784, 582.198, 707.600), stdev = 74.363
+  CI (99.9%): [295.854, 868.542] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = strict140k, codec = br5)
+
+# Run progress: 35.00% complete, ETA 00:03:39
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=br5 body=strict140k compressed=18857
+1002.913 us/op
+# Warmup Iteration   2: 974.235 us/op
+# Warmup Iteration   3: 888.174 us/op
+Iteration   1: 878.943 us/op
+Iteration   2: 847.419 us/op
+Iteration   3: 854.685 us/op
+Iteration   4: 874.605 us/op
+Iteration   5: 823.471 us/op
+
+
+Result "bench.FilterBench.respond":
+  855.825 ±(99.9%) 86.229 us/op [Average]
+  (min, avg, max) = (823.471, 855.825, 878.943), stdev = 22.393
+  CI (99.9%): [769.595, 942.054] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = streamed140k, codec = none)
+
+# Run progress: 40.00% complete, ETA 00:03:19
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=none body=streamed140k compressed=140421
+36.369 us/op
+# Warmup Iteration   2: 17.852 us/op
+# Warmup Iteration   3: 16.478 us/op
+Iteration   1: 16.263 us/op
+Iteration   2: 16.311 us/op
+Iteration   3: 16.432 us/op
+Iteration   4: 16.274 us/op
+Iteration   5: 16.954 us/op
+
+
+Result "bench.FilterBench.respond":
+  16.447 ±(99.9%) 1.121 us/op [Average]
+  (min, avg, max) = (16.263, 16.447, 16.954), stdev = 0.291
+  CI (99.9%): [15.325, 17.568] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = streamed140k, codec = gzip)
+
+# Run progress: 45.00% complete, ETA 00:03:04
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=gzip body=streamed140k compressed=21046
+1776.597 us/op
+# Warmup Iteration   2: 1541.886 us/op
+# Warmup Iteration   3: 1482.155 us/op
+Iteration   1: 1464.141 us/op
+Iteration   2: 1497.349 us/op
+Iteration   3: 1462.798 us/op
+Iteration   4: 1420.574 us/op
+Iteration   5: 1449.527 us/op
+
+
+Result "bench.FilterBench.respond":
+  1458.878 ±(99.9%) 106.812 us/op [Average]
+  (min, avg, max) = (1420.574, 1458.878, 1497.349), stdev = 27.739
+  CI (99.9%): [1352.066, 1565.689] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = streamed140k, codec = br4)
+
+# Run progress: 50.00% complete, ETA 00:02:45
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=br4 body=streamed140k compressed=22060
+738.956 us/op
+# Warmup Iteration   2: 559.369 us/op
+# Warmup Iteration   3: 520.365 us/op
+Iteration   1: 536.357 us/op
+Iteration   2: 535.297 us/op
+Iteration   3: 497.935 us/op
+Iteration   4: 489.468 us/op
+Iteration   5: 475.964 us/op
+
+
+Result "bench.FilterBench.respond":
+  507.004 ±(99.9%) 105.724 us/op [Average]
+  (min, avg, max) = (475.964, 507.004, 536.357), stdev = 27.456
+  CI (99.9%): [401.281, 612.728] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = streamed140k, codec = br5)
+
+# Run progress: 55.00% complete, ETA 00:02:30
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=br5 body=streamed140k compressed=18857
+1076.506 us/op
+# Warmup Iteration   2: 892.321 us/op
+# Warmup Iteration   3: 857.603 us/op
+Iteration   1: 879.192 us/op
+Iteration   2: 858.655 us/op
+Iteration   3: 811.343 us/op
+Iteration   4: 854.026 us/op
+Iteration   5: 847.015 us/op
+
+
+Result "bench.FilterBench.respond":
+  850.046 ±(99.9%) 95.231 us/op [Average]
+  (min, avg, max) = (811.343, 850.046, 879.192), stdev = 24.731
+  CI (99.9%): [754.815, 945.277] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = chunked140k, codec = none)
+
+# Run progress: 60.00% complete, ETA 00:02:12
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=none body=chunked140k compressed=140421
+43.905 us/op
+# Warmup Iteration   2: 22.103 us/op
+# Warmup Iteration   3: 17.978 us/op
+Iteration   1: 17.745 us/op
+Iteration   2: 17.512 us/op
+Iteration   3: 17.360 us/op
+Iteration   4: 17.288 us/op
+Iteration   5: 17.284 us/op
+
+
+Result "bench.FilterBench.respond":
+  17.438 ±(99.9%) 0.752 us/op [Average]
+  (min, avg, max) = (17.284, 17.438, 17.745), stdev = 0.195
+  CI (99.9%): [16.686, 18.190] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = chunked140k, codec = gzip)
+
+# Run progress: 65.00% complete, ETA 00:01:56
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=gzip body=chunked140k compressed=21046
+2022.947 us/op
+# Warmup Iteration   2: 1641.088 us/op
+# Warmup Iteration   3: 1528.423 us/op
+Iteration   1: 1529.107 us/op
+Iteration   2: 1525.928 us/op
+Iteration   3: 1484.204 us/op
+Iteration   4: 1479.524 us/op
+Iteration   5: 1475.508 us/op
+
+
+Result "bench.FilterBench.respond":
+  1498.854 ±(99.9%) 101.543 us/op [Average]
+  (min, avg, max) = (1475.508, 1498.854, 1529.107), stdev = 26.370
+  CI (99.9%): [1397.311, 1600.398] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = chunked140k, codec = br4)
+
+# Run progress: 70.00% complete, ETA 00:01:38
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=br4 body=chunked140k compressed=22060
+841.984 us/op
+# Warmup Iteration   2: 594.819 us/op
+# Warmup Iteration   3: 579.681 us/op
+Iteration   1: 563.748 us/op
+Iteration   2: 549.098 us/op
+Iteration   3: 530.848 us/op
+Iteration   4: 541.262 us/op
+Iteration   5: 507.260 us/op
+
+
+Result "bench.FilterBench.respond":
+  538.443 ±(99.9%) 81.500 us/op [Average]
+  (min, avg, max) = (507.260, 538.443, 563.748), stdev = 21.165
+  CI (99.9%): [456.944, 619.943] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = chunked140k, codec = br5)
+
+# Run progress: 75.00% complete, ETA 00:01:22
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=br5 body=chunked140k compressed=18857
+1226.548 us/op
+# Warmup Iteration   2: 945.558 us/op
+# Warmup Iteration   3: 906.378 us/op
+Iteration   1: 900.632 us/op
+Iteration   2: 919.771 us/op
+Iteration   3: 901.141 us/op
+Iteration   4: 864.806 us/op
+Iteration   5: 856.873 us/op
+
+
+Result "bench.FilterBench.respond":
+  888.645 ±(99.9%) 102.720 us/op [Average]
+  (min, avg, max) = (856.873, 888.645, 919.771), stdev = 26.676
+  CI (99.9%): [785.925, 991.365] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = chunkedTiny140k, codec = none)
+
+# Run progress: 80.00% complete, ETA 00:01:05
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=none body=chunkedTiny140k compressed=140421
+99.574 us/op
+# Warmup Iteration   2: 66.476 us/op
+# Warmup Iteration   3: 63.346 us/op
+Iteration   1: 62.743 us/op
+Iteration   2: 64.710 us/op
+Iteration   3: 62.628 us/op
+Iteration   4: 62.707 us/op
+Iteration   5: 63.768 us/op
+
+
+Result "bench.FilterBench.respond":
+  63.311 ±(99.9%) 3.508 us/op [Average]
+  (min, avg, max) = (62.628, 63.311, 64.710), stdev = 0.911
+  CI (99.9%): [59.803, 66.820] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = chunkedTiny140k, codec = gzip)
+
+# Run progress: 85.00% complete, ETA 00:00:49
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=gzip body=chunkedTiny140k compressed=27757
+3815.508 us/op
+# Warmup Iteration   2: 3320.062 us/op
+# Warmup Iteration   3: 3120.036 us/op
+Iteration   1: 3240.296 us/op
+Iteration   2: 3243.931 us/op
+Iteration   3: 3076.792 us/op
+Iteration   4: 3262.087 us/op
+Iteration   5: 3149.898 us/op
+
+
+Result "bench.FilterBench.respond":
+  3194.601 ±(99.9%) 304.135 us/op [Average]
+  (min, avg, max) = (3076.792, 3194.601, 3262.087), stdev = 78.983
+  CI (99.9%): [2890.466, 3498.736] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = chunkedTiny140k, codec = br4)
+
+# Run progress: 90.00% complete, ETA 00:00:32
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=br4 body=chunkedTiny140k compressed=22060
+1121.348 us/op
+# Warmup Iteration   2: 858.473 us/op
+# Warmup Iteration   3: 732.033 us/op
+Iteration   1: 722.819 us/op
+Iteration   2: 726.549 us/op
+Iteration   3: 717.804 us/op
+Iteration   4: 753.423 us/op
+Iteration   5: 704.687 us/op
+
+
+Result "bench.FilterBench.respond":
+  725.057 ±(99.9%) 68.867 us/op [Average]
+  (min, avg, max) = (704.687, 725.057, 753.423), stdev = 17.885
+  CI (99.9%): [656.189, 793.924] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.13, OpenJDK 64-Bit Server VM, 21.0.13
+# VM invoker: /opt/homebrew/Cellar/openjdk@21/21.0.13/libexec/openjdk.jdk/Contents/Home/bin/java
+# VM options: -Xmx1g
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Average time, time/op
+# Benchmark: bench.FilterBench.respond
+# Parameters: (body = chunkedTiny140k, codec = br5)
+
+# Run progress: 95.00% complete, ETA 00:00:16
+# Fork: 1 of 1
+# Warmup Iteration   1: SIZE codec=br5 body=chunkedTiny140k compressed=18857
+1400.785 us/op
+# Warmup Iteration   2: 1130.980 us/op
+# Warmup Iteration   3: 1111.524 us/op
+Iteration   1: 1075.879 us/op
+Iteration   2: 1039.407 us/op
+Iteration   3: 1032.443 us/op
+Iteration   4: 1056.022 us/op
+Iteration   5: 1066.585 us/op
+
+
+Result "bench.FilterBench.respond":
+  1054.067 ±(99.9%) 69.917 us/op [Average]
+  (min, avg, max) = (1032.443, 1054.067, 1075.879), stdev = 18.157
+  CI (99.9%): [984.150, 1123.985] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:05:27
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                     (body)  (codec)  Mode  Cnt     Score     Error  Units
+FilterBench.respond         strict4k     none  avgt    5     7.618 ±   0.797  us/op
+FilterBench.respond         strict4k     gzip  avgt    5    47.126 ±   3.554  us/op
+FilterBench.respond         strict4k      br4  avgt    5    49.836 ±   3.143  us/op
+FilterBench.respond         strict4k      br5  avgt    5    52.688 ±   2.005  us/op
+FilterBench.respond       strict140k     none  avgt    5     6.724 ±   0.611  us/op
+FilterBench.respond       strict140k     gzip  avgt    5  1578.495 ±  57.771  us/op
+FilterBench.respond       strict140k      br4  avgt    5   582.198 ± 286.344  us/op
+FilterBench.respond       strict140k      br5  avgt    5   855.825 ±  86.229  us/op
+FilterBench.respond     streamed140k     none  avgt    5    16.447 ±   1.121  us/op
+FilterBench.respond     streamed140k     gzip  avgt    5  1458.878 ± 106.812  us/op
+FilterBench.respond     streamed140k      br4  avgt    5   507.004 ± 105.724  us/op
+FilterBench.respond     streamed140k      br5  avgt    5   850.046 ±  95.231  us/op
+FilterBench.respond      chunked140k     none  avgt    5    17.438 ±   0.752  us/op
+FilterBench.respond      chunked140k     gzip  avgt    5  1498.854 ± 101.543  us/op
+FilterBench.respond      chunked140k      br4  avgt    5   538.443 ±  81.500  us/op
+FilterBench.respond      chunked140k      br5  avgt    5   888.645 ± 102.720  us/op
+FilterBench.respond  chunkedTiny140k     none  avgt    5    63.311 ±   3.508  us/op
+FilterBench.respond  chunkedTiny140k     gzip  avgt    5  3194.601 ± 304.135  us/op
+FilterBench.respond  chunkedTiny140k      br4  avgt    5   725.057 ±  68.867  us/op
+FilterBench.respond  chunkedTiny140k      br5  avgt    5  1054.067 ±  69.917  us/op
+[success] elapsed time: 350 s (0:05:50.0)

@@ -28,6 +28,10 @@ object BrotliCompressor {
   val MaxQuality: Int = 11
   val DefaultQuality: Int = MaxQuality
 
+  /** The window, as the log2 of its size, goes from 10 (1 KiB) to 24 (16 MiB). */
+  val MinWindow: Int = 10
+  val MaxWindow: Int = 24
+
   /** The size of the input buffer of the native encoder, which is also the size of the pieces that it is fed with. */
   private val InputBufferSize = 16 * 1024
 
@@ -36,7 +40,7 @@ object BrotliCompressor {
    * largest distance of a match is 2^window - 16, and the window goes from 10 to 24.
    */
   def windowFor(length: Int): Int =
-    math.max(10, math.min(24, 32 - Integer.numberOfLeadingZeros(math.max(length, 0) + 15)))
+    math.max(MinWindow, math.min(MaxWindow, 32 - Integer.numberOfLeadingZeros(math.max(length, 0) + 15)))
 
   /**
    * Compresses a whole body in one call, which is faster than a [[BrotliCompressor]] for a body that is already in
