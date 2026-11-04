@@ -9,12 +9,12 @@ import akka.stream.Materializer
 import akka.stream.scaladsl.{ Sink, Source }
 import akka.util.ByteString
 import play.api.Application
-import play.api.http.{ HttpEntity, HttpFilters }
+import play.api.http.{ HttpChunk, HttpEntity, HttpFilters, HttpProtocol }
 import play.api.inject._
 import play.api.inject.guice.GuiceApplicationBuilder
 import play.api.routing.{Router, SimpleRouterImpl}
 import play.api.test._
-import play.api.mvc.{ AnyContentAsEmpty, Action, DefaultActionBuilder, Result }
+import play.api.mvc.{ AnyContentAsEmpty, Action, DefaultActionBuilder, Headers, Result }
 import play.api.mvc.Results._
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -194,6 +194,39 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
       val known = windowOf(HttpEntity.Streamed(source, Some(contentLength), Some("text/css")))
       val unknown = windowOf(HttpEntity.Streamed(source, None, Some("text/css")))
       (known must_== BrotliCompressor.windowFor(contentLength.toInt)) and (unknown must_== 22)
+    }
+
+    "send a streamed body above the threshold to an HTTP/1.0 client close delimited, with the window that fits it" in
+      withApplication(Ok.sendEntity(HttpEntity.Streamed(source, Some(contentLength), Some("text/css"))), chunkedThreshold = 512) { app =>
+        implicit val mat: Materializer = app.materializer
+        val result = await(route(app, brotliRequest.withVersion(HttpProtocol.HTTP_1_0)).get)
+        val bytes = contentAsBytes(Future.successful(result))
+        (result.body must beAnInstanceOf[HttpEntity.Streamed]) and (result.body.contentLength must beNone) and
+          (windowBits(bytes) must_== BrotliCompressor.windowFor(contentLength.toInt)) and
+          (uncompress(bytes).length must_== contentLength.toInt)
+      }
+
+    "send the last chunk of a chunked response, with its trailers, after the compressed data, once" in {
+      val chunks = Source(List(HttpChunk.Chunk(ByteString("foo")), HttpChunk.Chunk(ByteString("bar")), HttpChunk.LastChunk(Headers("X-Trailer" -> "yes"))))
+      withApplication(Ok.sendEntity(HttpEntity.Chunked(chunks, None))) { app =>
+        implicit val mat: Materializer = app.materializer
+        val body = await(makeBrotliRequest(app)).body
+        val received = Await.result(body.asInstanceOf[HttpEntity.Chunked].chunks.runWith(Sink.seq), 5.seconds)
+        val data = received.collect { case HttpChunk.Chunk(d) => d }.foldLeft(ByteString.empty)(_ ++ _)
+        (uncompress(data) must_== "foobar") and
+          (received.last must_== HttpChunk.LastChunk(Headers("X-Trailer" -> "yes"))) and
+          (received.count(_.isInstanceOf[HttpChunk.LastChunk]) must_== 1)
+      }
+    }
+
+    "end a chunked response that has no last chunk" in {
+      val chunks = Source(List(HttpChunk.Chunk(ByteString("foo")), HttpChunk.Chunk(ByteString("bar"))))
+      withApplication(Ok.sendEntity(HttpEntity.Chunked(chunks, None))) { app =>
+        implicit val mat: Materializer = app.materializer
+        val received = Await.result(await(makeBrotliRequest(app)).body.asInstanceOf[HttpEntity.Chunked].chunks.runWith(Sink.seq), 5.seconds)
+        val data = received.collect { case HttpChunk.Chunk(d) => d }.foldLeft(ByteString.empty)(_ ++ _)
+        (uncompress(data) must_== "foobar") and (received.exists(_.isInstanceOf[HttpChunk.LastChunk]) must beFalse)
+      }
     }
 
     "keep a configured window for a streamed body of known length" in withApplication(
