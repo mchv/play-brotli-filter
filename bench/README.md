@@ -46,12 +46,8 @@ share the JVM, hence the CPU: compare the filters with each other, not with othe
 
 ## Measuring two commits
 
-`bench/compare.sh <base checkout> <head checkout> [out dir] [series] [base filters] [head filters]` runs `FilterBench`
-for the base then for the head, then three series of the load test alternating between the two, so that both see the
-same machine, and prints the compressed sizes, the JMH rows and the load summaries. The logs go to `bench-results/<date>`
-by default. The machine is rarely idle: compare the two commits with each other, and each brotli row with the gzip row of
-its own log.
-
-The two checkouts must be separate clones or worktrees, and a compile that sbt 2 finds in its disk cache comes back as
-links into the cache, which the JMH source generator cannot compile into (`javac` fails to write the generated
-classes): `sbt clean` the checkout, or run with a cold cache.
+`bench/compare.sh <base ref> <head ref> [out dir] [series]` checks out each ref in turn in this clone, runs `FilterBench`
+for each, then three series of the load test alternating between the two, so that both see the same machine, and prints
+the JMH rows and the load summaries. The working tree must be clean, and the branch it was on is checked out again at the
+end. The logs go to `bench-results/<date>` by default. The machine is rarely idle: compare the two commits with each
+other, and each brotli row with the gzip row of its own log.
