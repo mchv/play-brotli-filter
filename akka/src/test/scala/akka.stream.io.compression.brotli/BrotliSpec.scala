@@ -120,7 +120,9 @@ class BrotliSpec extends CoderSpec("brotli") {
       val compressed = new BrotliCompressor(5).compressAndFinish(data)
       val pieces = compressed.grouped(1).toVector
       pieces.length should be > 10000
-      val decoded = Source(pieces).via(BrotliCompression.unbrotli()).join.awaitResult(10.seconds)
+      // About 0.3 s in a 2-core container. Decoding again what has arrived for each of the pieces is quadratic in their
+      // number, far beyond 60 s, which leaves a slow shared CI runner the margin that 10 s did not
+      val decoded = Source(pieces).via(BrotliCompression.unbrotli()).join.awaitResult(60.seconds)
       sameBytes(decoded, data)
     }
 
