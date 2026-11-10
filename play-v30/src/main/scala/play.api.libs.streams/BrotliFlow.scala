@@ -45,8 +45,9 @@ object BrotliFlow {
    * Create a Brotli Flow with the given buffer size. The bufferSize controls how much data is sent to the Brotli compressor in
    * one go. You can use `0` or `Int.MaxValue` to disable the buffer completely.
    *
-   * In general, it is recommended to turn off the buffer: the compressor gives the encoder its input in pieces of 16 KB
-   * anyway, and the buffer is a stage that every element goes through.
+   * The compressor gives the encoder its input in pieces of 16 KB whatever the buffer size, so a smaller buffer only splits
+   * the input further, at the cost of a slice and a native call per piece, and in this flow a stage that every element
+   * goes through.
    */
   def brotli(
       bufferSize: Int = 512,
