@@ -108,8 +108,9 @@ abstract class BrotliFlushingLogic[In, Out](
   /**
    * Ends the stream: the encoder is finished and released, its last output is sent, then `trailer` if there is one, and
    * the stage completes. The subclass calls it when an element ends the stream; the end of the upstream calls it too.
+   * Only the first call does anything: the encoder is released after it.
    */
-  protected final def finish(trailer: Option[Out]): Unit = {
+  protected final def finish(trailer: Option[Out]): Unit = if (!finished) {
     // finish() releases the encoder, and the last output may wait for demand: a timer must not flush it meanwhile
     cancelTimer(FlushTimer)
     held = false
@@ -143,7 +144,7 @@ abstract class BrotliFlushingLogic[In, Out](
     } else ready = data
   }
 
-  override def onUpstreamFinish(): Unit = if (!finished) finish(None)
+  override def onUpstreamFinish(): Unit = finish(None)
 
   override def postStop(): Unit = compressor.close()
 }
