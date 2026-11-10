@@ -219,6 +219,18 @@ object BrotliFilterSpec extends PlaySpecification with DataTables {
       }
     }
 
+    "end a chunked response with its last chunk, even if the source does not complete after it" in {
+      // A source that sends its last chunk and then stays open: the response must end with the last chunk
+      val chunks = Source(List[HttpChunk](HttpChunk.Chunk(ByteString("foo")), HttpChunk.Chunk(ByteString("bar")), HttpChunk.LastChunk(Headers())))
+        .concat(Source.maybe[HttpChunk])
+      withApplication(Ok.sendEntity(HttpEntity.Chunked(chunks, None))) { app =>
+        implicit val mat: Materializer = app.materializer
+        val received = Await.result(await(makeBrotliRequest(app)).body.asInstanceOf[HttpEntity.Chunked].chunks.runWith(Sink.seq), 5.seconds)
+        val data = received.collect { case HttpChunk.Chunk(d) => d }.foldLeft(ByteString.empty)(_ ++ _)
+        (uncompress(data) must_== "foobar") and (received.last must_== HttpChunk.LastChunk(Headers()))
+      }
+    }
+
     "end a chunked response that has no last chunk" in {
       val chunks = Source(List(HttpChunk.Chunk(ByteString("foo")), HttpChunk.Chunk(ByteString("bar"))))
       withApplication(Ok.sendEntity(HttpEntity.Chunked(chunks, None))) { app =>
