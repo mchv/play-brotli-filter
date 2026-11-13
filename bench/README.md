@@ -44,3 +44,10 @@ last three in pieces of 8 KB, 8 KB and 256 bytes), in a JVM of its own, and repe
 the machine averages out. `bench/load-summary.sh <log>` prints the median of each figure. The server and the clients
 share the JVM, hence the CPU: compare the filters with each other, not with other machines.
 
+## Measuring two commits
+
+`bench/compare.sh <base ref> <head ref> [out dir] [series]` checks out each ref in turn in this clone, runs `FilterBench`
+for each, then three series of the load test alternating between the two, so that both see the same machine, and prints
+the JMH rows and the load summaries. The working tree must be clean, and the branch it was on is checked out again at the
+end. The logs go to `bench-results/<date>` by default. The machine is rarely idle: compare the two commits with each
+other, and each brotli row with the gzip row of its own log.

@@ -22,6 +22,8 @@ import akka.stream.impl.io.compression.{ CompressionUtils, Compressor, GzipCompr
 import akka.stream.scaladsl.{BrotliCompression, Flow, Keep, Sink, Source}
 import akka.stream.testkit.scaladsl.{TestSink, TestSource}
 import akka.util.ByteString
+import akka.stream.{ Attributes, FlowShape, Inlet, Outlet }
+import akka.stream.stage.{ GraphStage, GraphStageLogic }
 
 class BrotliSpec extends CoderSpec("brotli") {
   import CompressionTestingTools._
@@ -487,6 +489,34 @@ class BrotliSpec extends CoderSpec("brotli") {
       subscriber.request(Long.MaxValue)
       val rest = subscriber.toStrict(3.seconds) // fails with the error of the stream, or if it does not complete
       ourDecode(rest.foldLeft(flushed)(_ ++ _)).toArray should equal((first ++ second).toArray)
+    }
+
+    "finish once when a subclass of the flushing logic calls finish twice" in {
+      // A stage that ends the stream on an empty element and calls finish twice, with a trailer that waits for demand
+      // after the last compressed data: the second call must not complete the stage before the trailer is sent
+      val stage = new GraphStage[FlowShape[ByteString, ByteString]] {
+        val in = Inlet[ByteString]("twice.in")
+        val out = Outlet[ByteString]("twice.out")
+        override val shape: FlowShape[ByteString, ByteString] = FlowShape(in, out)
+        override def createLogic(attributes: Attributes): GraphStageLogic =
+          new BrotliFlushingLogic[ByteString, ByteString](shape, new Encoder.Parameters().setQuality(5), 50.millis) {
+            override protected def element(compressed: ByteString): ByteString = compressed
+            override def onPush(): Unit = {
+              val data = grab(in)
+              if (data.nonEmpty) compress(data)
+              else {
+                finish(Some(ByteString("trailer")))
+                finish(Some(ByteString("trailer")))
+              }
+            }
+          }
+      }
+      val data = ByteString(words(300))
+      val received = Source(List(data, ByteString.empty)).concat(Source.maybe[ByteString]).via(stage)
+        .runWith(Sink.seq).awaitResult(3.seconds)
+      received.count(_ == ByteString("trailer")) should be(1)
+      received.last should be(ByteString("trailer"))
+      ourDecode(received.init.foldLeft(ByteString.empty)(_ ++ _)).toArray should equal(data.toArray)
     }
   }
 }

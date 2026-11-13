@@ -16,22 +16,25 @@
 
 package play.api.libs.streams
 
-import java.util.zip.Deflater
-
 import scala.concurrent.duration.{ Duration, FiniteDuration }
 
 import com.aayushatharva.brotli4j.encoder.Encoder
 
+import akka.NotUsed
+import akka.stream.io.compression.brotli.BrotliFlushingLogic
 import akka.stream.scaladsl.BrotliCompression
 import akka.stream.scaladsl.Flow
 import akka.stream.stage._
 import akka.stream._
 import akka.util.ByteString
+import play.api.http.HttpChunk
 
 /**
- * A simple Brotli Flow
+ * Brotli flows for the Play filter.
  *
- * Brotlis each chunk separately.
+ * `brotli` compresses a stream of data. `brotliChunks` compresses a chunked response and `brotliToChunks` turns a
+ * stream of data into a compressed chunked response, each in a single stage: the chunks are not taken apart,
+ * compressed and put together in a stage each, which is what a response in many small chunks pays for the most.
  */
 object BrotliFlow {
 
@@ -42,7 +45,9 @@ object BrotliFlow {
    * Create a Brotli Flow with the given buffer size. The bufferSize controls how much data is sent to the Brotli compressor in
    * one go. You can use `0` or `Int.MaxValue` to disable the buffer completely.
    *
-   * In general, it is recommended to turn off the buffer and prevent generation of overlong chunks at the source.
+   * The compressor gives the encoder its input in pieces of 16 KB whatever the buffer size, so a smaller buffer only splits
+   * the input further, at the cost of a slice and a native call per piece, and in this flow a stage that every element
+   * goes through.
    */
   def brotli(
       bufferSize: Int = 512,
@@ -69,9 +74,64 @@ object BrotliFlow {
       .via(BrotliCompression.brotli(parameters, flushInterval))
   }
 
+  /**
+   * A flow that compresses the data of the chunks of a chunked response, and passes the last chunk, with its trailers,
+   * after the last of the compressed data. The encoder is flushed as `brotli(bufferSize, parameters, flushInterval)`
+   * does, and `bufferSize` is the most data it is given in one call (`0` or `Int.MaxValue` for no limit).
+   */
+  def brotliChunks(bufferSize: Int, parameters: Encoder.Parameters, flushInterval: FiniteDuration): Flow[HttpChunk, HttpChunk, NotUsed] =
+    Flow.fromGraph(new ChunkCompressor(pieceSize(bufferSize), parameters, flushInterval)).named("brotliChunks")
+
+  /**
+   * A flow that compresses a stream of data into the chunks of a chunked response, without a last chunk. The encoder is
+   * flushed as `brotli(bufferSize, parameters, flushInterval)` does, and `bufferSize` is the most data it is given in
+   * one call (`0` or `Int.MaxValue` for no limit).
+   */
+  def brotliToChunks(bufferSize: Int, parameters: Encoder.Parameters, flushInterval: FiniteDuration): Flow[ByteString, HttpChunk, NotUsed] =
+    Flow.fromGraph(new ToChunksCompressor(pieceSize(bufferSize), parameters, flushInterval)).named("brotliToChunks")
+
+  private def pieceSize(bufferSize: Int): Int = if (bufferSize > 0 && bufferSize < Int.MaxValue) bufferSize else 0
+
   private def chunkerIfNeeded(bufferSize: Int): Flow[ByteString, ByteString, Any] =
-    if (bufferSize > 0 && bufferSize < Int.MaxValue) Flow.fromGraph(new Chunker(bufferSize))
+    if (pieceSize(bufferSize) > 0) Flow.fromGraph(new Chunker(bufferSize))
     else Flow[ByteString]
+
+  /** The logic of the stages below: the data of an element goes to the encoder in pieces of at most `pieceSize` (0 for no limit). */
+  private abstract class ChunkLogic[In](shape: FlowShape[In, HttpChunk], pieceSize: Int, parameters: Encoder.Parameters, flushInterval: FiniteDuration)
+      extends BrotliFlushingLogic[In, HttpChunk](shape, parameters, flushInterval) {
+    override protected def element(compressed: ByteString): HttpChunk = HttpChunk.Chunk(compressed)
+
+    protected final def compressPieces(data: ByteString): Unit =
+      if (pieceSize == 0 || data.length <= pieceSize) compress(data)
+      else data.grouped(pieceSize).foreach(compress)
+  }
+
+  private final class ChunkCompressor(pieceSize: Int, parameters: Encoder.Parameters, flushInterval: FiniteDuration)
+      extends GraphStage[FlowShape[HttpChunk, HttpChunk]] {
+    private val in = Inlet[HttpChunk]("BrotliChunks.in")
+    private val out = Outlet[HttpChunk]("BrotliChunks.out")
+    override val shape: FlowShape[HttpChunk, HttpChunk] = FlowShape(in, out)
+
+    override def createLogic(inheritedAttributes: Attributes): GraphStageLogic =
+      new ChunkLogic[HttpChunk](shape, pieceSize, parameters, flushInterval) {
+        override def onPush(): Unit = grab(in) match {
+          case HttpChunk.Chunk(data)    => compressPieces(data)
+          case last: HttpChunk.LastChunk => finish(Some(last))
+        }
+      }
+  }
+
+  private final class ToChunksCompressor(pieceSize: Int, parameters: Encoder.Parameters, flushInterval: FiniteDuration)
+      extends GraphStage[FlowShape[ByteString, HttpChunk]] {
+    private val in = Inlet[ByteString]("BrotliToChunks.in")
+    private val out = Outlet[HttpChunk]("BrotliToChunks.out")
+    override val shape: FlowShape[ByteString, HttpChunk] = FlowShape(in, out)
+
+    override def createLogic(inheritedAttributes: Attributes): GraphStageLogic =
+      new ChunkLogic[ByteString](shape, pieceSize, parameters, flushInterval) {
+        override def onPush(): Unit = compressPieces(grab(in))
+      }
+  }
 
   // http://doc.akka.io/docs/akka/2.4.14/scala/stream/stream-cookbook.html#Chunking_up_a_stream_of_ByteStrings_into_limited_size_ByteStrings
   private class Chunker(val chunkSize: Int) extends GraphStage[FlowShape[ByteString, ByteString]] {
